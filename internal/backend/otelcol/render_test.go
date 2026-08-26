@@ -4,6 +4,7 @@ package otelcol
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -329,15 +330,14 @@ func TestUnsupportedTypeErrors(t *testing.T) {
 	}
 }
 
-func TestNameAndStubs(t *testing.T) {
+func TestName(t *testing.T) {
 	b := New()
 	if b.Name() != "otelcol" {
 		t.Errorf("Name = %q, want otelcol", b.Name())
 	}
-	if _, err := b.Apply(nil, backend.RenderedConfig{}); err == nil {
-		t.Error("Apply stub should error in this chunk")
-	}
-	if err := b.Healthy(nil); err == nil {
-		t.Error("Healthy stub should error in this chunk")
+	// With no runtime wired, Apply and Healthy report the missing runtime rather
+	// than panicking. The full apply-path behavior is covered in apply_test.go.
+	if err := b.Healthy(context.Background()); err == nil {
+		t.Error("Healthy with no runtime should error")
 	}
 }

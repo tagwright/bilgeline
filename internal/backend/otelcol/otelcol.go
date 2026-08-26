@@ -34,16 +34,20 @@
 package otelcol
 
 import (
-	"context"
-	"errors"
+	"time"
 
 	"github.com/tagwright/bilgeline/internal/backend"
+	"github.com/tagwright/core/runtime"
 )
 
 // Backend is the otelcol implementation of backend.Backend. It is safe to reuse
 // across renders and holds only deployment-level knobs (checkpoint directory,
-// health endpoint) that are constant for a given collector deployment, never
-// per-Spec state.
+// health endpoint, and the apply-path wiring) that are constant for a given
+// collector deployment, never per-Spec state.
+//
+// Render depends on none of the apply-path fields: a zero-value Backend (or one
+// built with New and no apply options) renders correctly. The runtime, shared
+// path, and collector identity are only consulted by Apply and Healthy.
 type Backend struct {
 	// fileStorageDir is the on-disk directory the file_storage extension keeps
 	// filelog read offsets in. It must be a durable path on a volume the
@@ -54,6 +58,32 @@ type Backend struct {
 	// healthCheckEndpoint is where the health_check extension listens, used by the
 	// apply chunk to probe the collector after a reload.
 	healthCheckEndpoint string
+
+	// rt is the container runtime the apply path drives to find, signal, and
+	// recover the collector. Nil in a render-only Backend; Apply and Healthy
+	// return a descriptive error when it is unset.
+	rt runtime.Runtime
+
+	// sharedConfigPath is the on-disk path Apply writes the rendered config to,
+	// on the volume shared read-only into the collector. It is also the path the
+	// mount guard checks the collector actually mounts before any signal.
+	sharedConfigPath string
+
+	// collectorName is the fallback collector container identity (cfg.Collector),
+	// used only when no container carries the bilgeline.collector marker.
+	collectorName string
+
+	// collectorHealthURL is an optional collector health endpoint. When set,
+	// Healthy and the wedge-recovery path may additionally GET it as a secondary,
+	// network-dependent confirmation. It is never the primary wedge signal and a
+	// restart is never triggered solely because it was unreachable. Empty (off)
+	// by default.
+	collectorHealthURL string
+
+	// reloadWait is the bounded window Apply polls the collector's container
+	// state after a SIGHUP (and again after a restart) before concluding the
+	// reload took. Defaults to DefaultReloadWait.
+	reloadWait time.Duration
 }
 
 // Defaults for a Backend's deployment knobs.
@@ -65,7 +95,18 @@ const (
 	// DefaultHealthCheckEndpoint is where health_check listens when unset. The
 	// wildcard host lets the apply chunk probe it from another container.
 	DefaultHealthCheckEndpoint = "0.0.0.0:13133"
+
+	// DefaultReloadWait is the bounded window Apply polls the collector's
+	// container state after a SIGHUP, and again after a restart, before deciding
+	// the reload settled. A few seconds is enough to catch the 2025 reload crash
+	// bugs, which manifest as the collector process dying (the container exits)
+	// shortly after the SIGHUP.
+	DefaultReloadWait = 5 * time.Second
 )
+
+// reloadPollInterval is how often the wedge-recovery loop re-inspects the
+// collector's state within the reloadWait window.
+const reloadPollInterval = 250 * time.Millisecond
 
 // Name is the backend attribute name holding the routing key: a resource
 // attribute whose value is a service's canonical, sorted destination set, matched
@@ -94,12 +135,61 @@ func WithHealthCheckEndpoint(endpoint string) Option {
 	}
 }
 
+// WithRuntime injects the container runtime the apply path drives to find,
+// SIGHUP, and recover the collector. Required for Apply and Healthy; Render does
+// not use it.
+func WithRuntime(rt runtime.Runtime) Option {
+	return func(b *Backend) {
+		b.rt = rt
+	}
+}
+
+// WithSharedConfigPath sets the on-disk path Apply writes the rendered config
+// to and that the mount guard requires the collector to mount.
+func WithSharedConfigPath(path string) Option {
+	return func(b *Backend) {
+		if path != "" {
+			b.sharedConfigPath = path
+		}
+	}
+}
+
+// WithCollectorName sets the fallback collector container identity
+// (cfg.Collector), used only when no container carries the bilgeline.collector
+// marker.
+func WithCollectorName(name string) Option {
+	return func(b *Backend) {
+		b.collectorName = name
+	}
+}
+
+// WithCollectorHealthURL sets an optional collector health URL used as a
+// secondary, network-dependent confirmation by Healthy and the reload path. It
+// is off (empty) by default and never drives a restart on its own.
+func WithCollectorHealthURL(url string) Option {
+	return func(b *Backend) {
+		b.collectorHealthURL = url
+	}
+}
+
+// WithReloadWait overrides the bounded window Apply polls the collector's
+// container state after a SIGHUP (and after a restart). A non-positive value is
+// ignored, leaving DefaultReloadWait in place.
+func WithReloadWait(d time.Duration) Option {
+	return func(b *Backend) {
+		if d > 0 {
+			b.reloadWait = d
+		}
+	}
+}
+
 // New constructs an otelcol Backend with the given options applied over the
 // deployment defaults.
 func New(opts ...Option) *Backend {
 	b := &Backend{
 		fileStorageDir:      DefaultFileStorageDir,
 		healthCheckEndpoint: DefaultHealthCheckEndpoint,
+		reloadWait:          DefaultReloadWait,
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -110,21 +200,7 @@ func New(opts ...Option) *Backend {
 // Name identifies this backend.
 func (b *Backend) Name() string { return "otelcol" }
 
-// errNotImplemented marks the methods this chunk deliberately leaves for the
-// daemon/apply chunk.
-var errNotImplemented = errors.New("otelcol: not implemented in this chunk")
-
-// Apply is implemented in the daemon/apply chunk. It will write the rendered
-// config to the shared path and SIGHUP (escalating to restart) the collector.
-func (b *Backend) Apply(ctx context.Context, cfg backend.RenderedConfig) (backend.ApplyResult, error) {
-	return backend.ApplyResult{}, errNotImplemented
-}
-
-// Healthy is implemented in the daemon/apply chunk. It will probe the collector's
-// health_check extension.
-func (b *Backend) Healthy(ctx context.Context) error {
-	return errNotImplemented
-}
+// Apply and Healthy are implemented in apply.go.
 
 // Compile-time assertion that Backend satisfies the interface.
 var _ backend.Backend = (*Backend)(nil)
