@@ -1,0 +1,90 @@
+connectors:
+    routing:
+        error_mode: ignore
+        table:
+            - condition: attributes["bilgeline.routing_key"] == "archive,loki"
+              context: resource
+              pipelines:
+                - logs/out_747abc821fce
+exporters:
+    file/archive:
+        path: /var/log/archive/out.json
+    otlphttp/loki:
+        endpoint: http://loki:3100/otlp
+        headers:
+            Authorization: Bearer ${env:LOKI_BEARER}
+extensions:
+    file_storage:
+        create_directory: true
+        directory: /var/lib/otelcol/file_storage
+    health_check:
+        endpoint: 0.0.0.0:13133
+processors:
+    batch: {}
+    filter/drop:
+        error_mode: ignore
+        logs:
+            log_record:
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111" and attributes["log.iostream"] == "stderr"
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111" and severity_number != 0 and severity_number < 13
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111" and IsMatch(body, "GET /healthz")
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111" and IsMatch(body, "kube-probe")
+    memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+    transform/enrich:
+        error_mode: ignore
+        log_statements:
+            - conditions:
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111"
+              context: log
+              statements:
+                - set(resource.attributes["service.name"], "api")
+                - set(resource.attributes["service.namespace"], "shop")
+                - set(resource.attributes["container.id"], "1111111111111111111111111111111111111111111111111111111111111111")
+                - set(resource.attributes["container.name"], "api")
+                - set(resource.attributes["container.image.name"], "shop/api:1.4")
+                - set(resource.attributes["team"], "payments")
+                - set(resource.attributes["tier"], "edge")
+                - set(resource.attributes["bilgeline.routing_key"], "archive,loki")
+receivers:
+    filelog/610a3f7256e0:
+        include:
+            - /var/lib/docker/containers/1111111111111111111111111111111111111111111111111111111111111111/1111111111111111111111111111111111111111111111111111111111111111-json.log
+        include_file_path: true
+        operators:
+            - add_metadata_from_filepath: false
+              format: docker
+              type: container
+            - parse_from: attributes["log.file.path"]
+              regex: ^/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})/
+              type: regex_parser
+            - parse_from: body
+              parse_to: attributes
+              type: json_parser
+            - parse_from: attributes.level
+              type: severity_parser
+        storage: file_storage
+service:
+    extensions:
+        - file_storage
+        - health_check
+    pipelines:
+        logs/ingest:
+            exporters:
+                - routing
+            processors:
+                - memory_limiter
+                - transform/enrich
+                - filter/drop
+            receivers:
+                - filelog/610a3f7256e0
+        logs/out_747abc821fce:
+            exporters:
+                - file/archive
+                - otlphttp/loki
+            processors:
+                - batch
+            receivers:
+                - routing

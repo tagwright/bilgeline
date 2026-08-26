@@ -1,0 +1,70 @@
+connectors:
+    routing:
+        error_mode: ignore
+        table:
+            - condition: attributes["bilgeline.routing_key"] == "archive"
+              context: resource
+              pipelines:
+                - logs/out_0eb3e36bfb24
+exporters:
+    file/archive:
+        path: /var/log/archive/out.json
+extensions:
+    file_storage:
+        create_directory: true
+        directory: /var/lib/otelcol/file_storage
+    health_check:
+        endpoint: 0.0.0.0:13133
+processors:
+    batch: {}
+    memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+    transform/enrich:
+        error_mode: ignore
+        log_statements:
+            - conditions:
+                - attributes["container_id"] == "1111111111111111111111111111111111111111111111111111111111111111"
+              context: log
+              statements:
+                - set(resource.attributes["service.name"], "worker")
+                - set(resource.attributes["container.id"], "1111111111111111111111111111111111111111111111111111111111111111")
+                - set(resource.attributes["container.name"], "worker")
+                - set(resource.attributes["bilgeline.routing_key"], "archive")
+receivers:
+    filelog/10897e722acb:
+        include:
+            - /var/lib/docker/containers/1111111111111111111111111111111111111111111111111111111111111111/1111111111111111111111111111111111111111111111111111111111111111-json.log
+        include_file_path: true
+        operators:
+            - add_metadata_from_filepath: false
+              format: docker
+              type: container
+            - parse_from: attributes["log.file.path"]
+              regex: ^/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})/
+              type: regex_parser
+            - combine_field: body
+              is_first_entry: body matches "^\\d{4}-\\d{2}-\\d{2}"
+              type: recombine
+        storage: file_storage
+service:
+    extensions:
+        - file_storage
+        - health_check
+    pipelines:
+        logs/ingest:
+            exporters:
+                - routing
+            processors:
+                - memory_limiter
+                - transform/enrich
+            receivers:
+                - filelog/10897e722acb
+        logs/out_0eb3e36bfb24:
+            exporters:
+                - file/archive
+            processors:
+                - batch
+            receivers:
+                - routing
