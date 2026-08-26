@@ -1,0 +1,127 @@
+# Turnkey bilgeline stack: the bilgeline generator plus a user-owned
+# OpenTelemetry Collector. Copy this file, drop a bilgeline.yml next to it
+# (see bilgeline.example.yml), provision your collector secrets (see
+# collector.env.example and docs/DEPLOY.md), and `docker compose up -d`.
+#
+# The two containers and who mounts what:
+#
+#   bilgeline       reads bilgeline.* labels off your containers via the socket,
+#                   writes the collector config to the shared-config volume, and
+#                   signals the collector to reload. Holds no destination
+#                   credentials and never reads a log byte.
+#   otel-collector  reads that config (read-only), tails the Docker json logs,
+#                   and ships them to your destinations. This is where the
+#                   destination secrets live, as environment variables.
+#
+# The collector image is pinned to 0.159.0, the version bilgeline's config
+# generator is validated against. Keep them in step when you upgrade either.
+
+name: bilgeline
+
+services:
+  # One-shot config seed. It writes an inert-but-valid collector config into the
+  # shared volume ONLY if none exists yet, so the collector's first boot always
+  # has a valid --config to load. This is byte-for-byte the inert config
+  # bilgeline itself writes when nothing is labeled, so nothing diverges:
+  # bilgeline overwrites it on its startup reconcile and on every change after.
+  # On later boots the file already exists on the named volume and this is a
+  # no-op. Without it the collector would crash-loop for the ~1-2s before
+  # bilgeline first writes the config; the seed removes that window entirely.
+  config-seed:
+    image: busybox:1.37
+    command:
+      - sh
+      - -c
+      - |
+        if [ ! -f /config/otelcol.yaml ]; then
+          cat > /config/otelcol.yaml <<'EOF'
+        exporters:
+            nop: {}
+        extensions:
+            health_check:
+                endpoint: 0.0.0.0:13133
+        receivers:
+            nop: {}
+        service:
+            extensions:
+                - health_check
+            pipelines:
+                logs/inert:
+                    exporters:
+                        - nop
+                    receivers:
+                        - nop
+        EOF
+          echo "seeded inert /config/otelcol.yaml"
+        else
+          echo "/config/otelcol.yaml already present, leaving it"
+        fi
+    volumes:
+      - shared-config:/config
+    networks:
+      - bilgeline
+    restart: "no"
+
+  bilgeline:
+    image: ghcr.io/tagwright/bilgeline:latest
+    command: ["daemon"]
+    depends_on:
+      config-seed:
+        condition: service_completed_successfully
+    volumes:
+      # The container socket, read-write: bilgeline discovers containers AND
+      # signals the collector (SIGHUP, and a restart on a wedged reload) through
+      # the Docker API, so read-only is not enough.
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      # The shared config volume, read-write: this is where bilgeline writes the
+      # generated collector YAML.
+      - shared-config:/config
+      # Your daemon config. Optional (bilgeline runs env-only with no file), but
+      # this is where you name your destinations. Read-only.
+      - ./bilgeline.yml:/etc/bilgeline/bilgeline.yml:ro
+    networks:
+      - bilgeline
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    command: ["--config=/config/otelcol.yaml"]
+    depends_on:
+      config-seed:
+        condition: service_completed_successfully
+    # The marker bilgeline finds the collector by. This is the primary
+    # mechanism; the `collector:` key in bilgeline.yml is only a fallback.
+    labels:
+      bilgeline.collector: "true"
+    # Destination secrets are environment variables on THIS container, because
+    # bilgeline emits ${env:VAR} references the collector expands at config load.
+    # Provision them however you like; the SOPS-with-age pattern in
+    # docs/DEPLOY.md is the recommended one. This file is optional so the stack
+    # validates and boots before you have created it; a destination that
+    # references an unset var will simply fail to authenticate at the collector.
+    env_file:
+      - path: ./collector.env
+        required: false
+    volumes:
+      # The shared config, read-only: the collector only reads what bilgeline
+      # writes.
+      - shared-config:/config:ro
+      # The Docker container logs, read-only: this is the filelog source. Only
+      # the collector mounts this, never bilgeline.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Durable filelog checkpoints (read offsets). Load-bearing: it is what
+      # makes a reload or restart resume tailing instead of re-reading or
+      # skipping. Owned by the collector deployment.
+      - collector-checkpoints:/var/lib/otelcol/file_storage
+    networks:
+      - bilgeline
+    restart: unless-stopped
+
+volumes:
+  # bilgeline writes here, the collector reads here.
+  shared-config:
+  # filelog read offsets, durable across collector restarts.
+  collector-checkpoints:
+
+networks:
+  bilgeline:
