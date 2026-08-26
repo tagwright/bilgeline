@@ -3,12 +3,15 @@
 package discovery
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/config"
+	"github.com/tagwright/core/runtime"
 )
 
 // sharedConfigYAML is a config with two destinations, a global promoted-label
@@ -569,6 +572,89 @@ func TestAliasPrefixParsed(t *testing.T) {
 	}
 }
 
+// TestPromotedLabelValuesResolved proves a promoted label KEY is resolved to its
+// VALUE off the container's raw label map and folded into StaticAttrs, that a
+// promoted key the container lacks is skipped, that none suppresses the global
+// promotion (so no global value lands), and that an explicit bilgeline.attr.X
+// wins over a promoted label of the same key.
+func TestPromotedLabelValuesResolved(t *testing.T) {
+	cfg := loadConfig(t, sharedConfigYAML)
+
+	t.Run("value resolved from raw labels", func(t *testing.T) {
+		spec, diags := Resolve(Candidate{ID: "c1", Name: "app", Labels: map[string]string{
+			"bilgeline.enable":                 "true",
+			"bilgeline.destination":            "loki",
+			"bilgeline.labels":                 "org.opencontainers.image.version",
+			"org.opencontainers.image.version": "1.2.3",
+		}}, cfg, "self")
+		if spec == nil {
+			t.Fatalf("want spec, got skip: %v", diags)
+		}
+		if got := spec.StaticAttrs["org.opencontainers.image.version"]; got != "1.2.3" {
+			t.Errorf("StaticAttrs[version] = %q, want 1.2.3 (promoted value)", got)
+		}
+	})
+
+	t.Run("promoted key the container lacks is skipped", func(t *testing.T) {
+		spec, diags := Resolve(Candidate{ID: "c1", Name: "app", Labels: map[string]string{
+			"bilgeline.enable":      "true",
+			"bilgeline.destination": "loki",
+			"bilgeline.labels":      "missing.key",
+		}}, cfg, "self")
+		if spec == nil {
+			t.Fatalf("want spec, got skip: %v", diags)
+		}
+		if _, ok := spec.StaticAttrs["missing.key"]; ok {
+			t.Errorf("StaticAttrs = %v, want no entry for a label the container lacks", spec.StaticAttrs)
+		}
+	})
+
+	t.Run("none suppresses the global promoted value", func(t *testing.T) {
+		spec, diags := Resolve(Candidate{ID: "c1", Name: "app", Labels: map[string]string{
+			"bilgeline.enable":      "true",
+			"bilgeline.destination": "loki",
+			"bilgeline.labels":      "none",
+			"globalkey":             "gv",
+		}}, cfg, "self")
+		if spec == nil {
+			t.Fatalf("want spec, got skip: %v", diags)
+		}
+		if _, ok := spec.StaticAttrs["globalkey"]; ok {
+			t.Errorf("StaticAttrs = %v, want globalkey suppressed by none", spec.StaticAttrs)
+		}
+	})
+
+	t.Run("global promoted value lands by default", func(t *testing.T) {
+		spec, diags := Resolve(Candidate{ID: "c1", Name: "app", Labels: map[string]string{
+			"bilgeline.enable":      "true",
+			"bilgeline.destination": "loki",
+			"globalkey":             "gv",
+		}}, cfg, "self")
+		if spec == nil {
+			t.Fatalf("want spec, got skip: %v", diags)
+		}
+		if got := spec.StaticAttrs["globalkey"]; got != "gv" {
+			t.Errorf("StaticAttrs[globalkey] = %q, want gv (global promotion resolved)", got)
+		}
+	})
+
+	t.Run("explicit attr wins over promoted label", func(t *testing.T) {
+		spec, diags := Resolve(Candidate{ID: "c1", Name: "app", Labels: map[string]string{
+			"bilgeline.enable":      "true",
+			"bilgeline.destination": "loki",
+			"bilgeline.attr.tier":   "explicit",
+			"bilgeline.labels":      "tier",
+			"tier":                  "promoted",
+		}}, cfg, "self")
+		if spec == nil {
+			t.Fatalf("want spec, got skip: %v", diags)
+		}
+		if got := spec.StaticAttrs["tier"]; got != "explicit" {
+			t.Errorf("StaticAttrs[tier] = %q, want explicit (attr beats promoted label)", got)
+		}
+	})
+}
+
 // TestIdentityFieldsStamped proves the auto-attribute identity fields are
 // carried onto the spec for the renderer.
 func TestIdentityFieldsStamped(t *testing.T) {
@@ -586,5 +672,155 @@ func TestIdentityFieldsStamped(t *testing.T) {
 	}
 	if spec.Source != backend.SourceDockerJSONFile {
 		t.Errorf("Source = %q, want %q", spec.Source, backend.SourceDockerJSONFile)
+	}
+}
+
+// fakeRuntime is a minimal runtime.Runtime for exercising the Discover path
+// without a socket. Only List and Inspect carry behavior; the rest satisfy the
+// interface and are never called by discovery.
+type fakeRuntime struct {
+	list       []runtime.Container
+	inspect    map[string]runtime.Container
+	inspectErr map[string]error
+	inspected  []string // ids Inspect was actually called for
+}
+
+func (f *fakeRuntime) List(ctx context.Context) ([]runtime.Container, error) {
+	return f.list, nil
+}
+
+func (f *fakeRuntime) Inspect(ctx context.Context, id string) (runtime.Container, error) {
+	f.inspected = append(f.inspected, id)
+	if e, ok := f.inspectErr[id]; ok {
+		return runtime.Container{}, e
+	}
+	c, ok := f.inspect[id]
+	if !ok {
+		return runtime.Container{}, fmt.Errorf("fakeRuntime: no inspect entry for %q", id)
+	}
+	return c, nil
+}
+
+func (f *fakeRuntime) Watch(ctx context.Context) (<-chan runtime.Event, <-chan error) {
+	return nil, nil
+}
+
+func (f *fakeRuntime) Exec(ctx context.Context, id string, spec runtime.ExecSpec) (*runtime.ExecHandle, error) {
+	return nil, runtime.ErrNotImplemented
+}
+
+func (f *fakeRuntime) Stop(ctx context.Context, id string, timeoutSeconds int) error {
+	return runtime.ErrNotImplemented
+}
+
+func (f *fakeRuntime) Start(ctx context.Context, id string) error { return runtime.ErrNotImplemented }
+
+func (f *fakeRuntime) Kill(ctx context.Context, id string, signal string) error {
+	return runtime.ErrNotImplemented
+}
+
+func (f *fakeRuntime) Restart(ctx context.Context, id string) error {
+	return runtime.ErrNotImplemented
+}
+
+func (f *fakeRuntime) Close() error { return nil }
+
+// TestDiscoverInspectsOnlyEnabled proves Discover gates on the list labels: it
+// inspects only the opted-in container, and the inspect result populates Image
+// (stamped onto the spec) so the renderer's identity fields are real.
+func TestDiscoverInspectsOnlyEnabled(t *testing.T) {
+	cfg := loadConfig(t, sharedConfigYAML)
+
+	enabledSummary := runtime.Container{
+		ID: "enabled1", Name: "app",
+		Labels: map[string]string{"bilgeline.enable": "true", "bilgeline.destination": "loki"},
+	}
+	idleSummary := runtime.Container{
+		ID: "idle1", Name: "idle",
+		Labels: map[string]string{"some.other": "label"},
+	}
+	rt := &fakeRuntime{
+		list: []runtime.Container{enabledSummary, idleSummary},
+		inspect: map[string]runtime.Container{
+			"enabled1": {
+				ID: "enabled1", Name: "app",
+				Labels:    enabledSummary.Labels,
+				Image:     "ghcr.io/app:2.0",
+				LogDriver: "json-file",
+			},
+		},
+	}
+
+	specs, diags, err := Discover(context.Background(), rt, cfg, "self")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(rt.inspected) != 1 || rt.inspected[0] != "enabled1" {
+		t.Errorf("inspected = %v, want only [enabled1] (the non-enabled container must not be inspected)", rt.inspected)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("specs = %d, want 1 (only the enabled container routes): %+v", len(specs), specs)
+	}
+	if specs[0].Image != "ghcr.io/app:2.0" {
+		t.Errorf("Image = %q, want the inspect image stamped onto the spec", specs[0].Image)
+	}
+	if hasSeverity(diags, SeverityError) {
+		t.Errorf("clean discovery should have no error diagnostics, got %v", diags)
+	}
+}
+
+// TestDiscoverLogDriverExclusionFires proves the non-json-file exclusion, inert
+// while LogDriver was always empty, now fires once Inspect populates it: a
+// container on the local driver is excluded with a warning and never routes.
+func TestDiscoverLogDriverExclusionFires(t *testing.T) {
+	cfg := loadConfig(t, sharedConfigYAML)
+
+	labels := map[string]string{"bilgeline.enable": "true", "bilgeline.destination": "loki"}
+	rt := &fakeRuntime{
+		list: []runtime.Container{{ID: "local1", Name: "app", Labels: labels}},
+		inspect: map[string]runtime.Container{
+			"local1": {ID: "local1", Name: "app", Labels: labels, Image: "img:1", LogDriver: "local"},
+		},
+	}
+
+	specs, diags, err := Discover(context.Background(), rt, cfg, "self")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(specs) != 0 {
+		t.Fatalf("specs = %d, want 0 (local driver excluded): %+v", len(specs), specs)
+	}
+	if !hasSeverity(diags, SeverityWarning) {
+		t.Errorf("non-json-file driver should warn once populated by inspect, got %v", diags)
+	}
+}
+
+// TestDiscoverInspectFailureSkips proves a per-container Inspect failure is a
+// warning that skips only that container: the rest of the fleet still resolves.
+func TestDiscoverInspectFailureSkips(t *testing.T) {
+	cfg := loadConfig(t, sharedConfigYAML)
+
+	badLabels := map[string]string{"bilgeline.enable": "true", "bilgeline.destination": "loki"}
+	goodLabels := map[string]string{"bilgeline.enable": "true", "bilgeline.destination": "loki"}
+	rt := &fakeRuntime{
+		list: []runtime.Container{
+			{ID: "bad1", Name: "gone", Labels: badLabels},
+			{ID: "good1", Name: "app", Labels: goodLabels},
+		},
+		inspectErr: map[string]error{"bad1": fmt.Errorf("no such container")},
+		inspect: map[string]runtime.Container{
+			"good1": {ID: "good1", Name: "app", Labels: goodLabels, Image: "img:1", LogDriver: "json-file"},
+		},
+	}
+
+	specs, diags, err := Discover(context.Background(), rt, cfg, "self")
+	if err != nil {
+		t.Fatalf("Discover must not abort on a per-container inspect failure: %v", err)
+	}
+	if len(specs) != 1 || specs[0].ContainerID != "good1" {
+		t.Fatalf("specs = %+v, want only good1 (the healthy container still resolves)", specs)
+	}
+	if !hasSeverity(diags, SeverityWarning) {
+		t.Errorf("a failed inspect should emit a warning diagnostic, got %v", diags)
 	}
 }

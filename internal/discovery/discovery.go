@@ -21,6 +21,7 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/tagwright/bilgeline/internal/backend"
@@ -77,9 +78,9 @@ type Diagnostic struct {
 // label-and-config logic needs about one container, decoupled from the runtime
 // client so the logic is testable without a socket.
 //
-// Image and LogDriver are not exposed by the current core runtime.Container
-// (see candidateFromContainer): they arrive empty in v1 and light up once core
-// surfaces them, with no change to Resolve.
+// Image and LogDriver are populated from the container's Inspect result (the
+// list summary carries no HostConfig, so LogDriver is inspect-only). Discover
+// inspects each opted-in container to fill them; see candidateFromContainer.
 type Candidate struct {
 	// ID is the full 64-hex container id.
 	ID string
@@ -94,24 +95,35 @@ type Candidate struct {
 	// service.
 	ComposeService string
 	// Image is the container image reference, stamped as container.image.name.
-	// Empty until core exposes it.
+	// Populated from the Inspect result.
 	Image string
 	// LogDriver is the container's effective log driver (e.g. "json-file",
 	// "local"). Empty means unknown, which v1 treats as json-file compatible so
 	// a stock Docker host routes normally; a known non-json-file driver excludes
-	// the container. Empty until core exposes it.
+	// the container. Populated from the Inspect result (inspect-only in core).
 	LogDriver string
 }
 
-// Discover lists every container through rt, resolves each against cfg, and
-// returns the routed services plus every diagnostic gathered along the way.
-// selfID is bilgeline's own container id, always excluded from routing.
+// Discover lists every container through rt, inspects the ones that opted in,
+// resolves each against cfg, and returns the routed services plus every
+// diagnostic gathered along the way. selfID is bilgeline's own container id,
+// always excluded from routing.
+//
+// The list summary carries no HostConfig, so the effective log driver is
+// inspect-only. Rather than inspect the whole host, Discover gates cheaply on
+// the list labels first: only a container whose labels already carry
+// enable=true (under either recognized prefix) is inspected, and the inspect
+// result (which carries Image and LogDriver) is what its Candidate is built
+// from. Self and the collector marker are left to Resolve, which warns only in
+// the degenerate enable=true case; a container that never opted in is skipped
+// here for free, with no socket round-trip.
 //
 // The returned error is reserved for a hard failure that prevents discovery at
-// all (the runtime list call failing). Per-container validation problems are
-// Diagnostics, never errors: a single bad container is skipped and reported,
-// and the rest of the fleet still resolves. Services are returned sorted by
-// ContainerID so the daemon's Spec.Hash is stable across passes.
+// all (the runtime list call failing). Per-container problems are Diagnostics,
+// never errors: a container whose Inspect fails is skipped with a warning, a
+// container that fails validation is skipped and reported, and the rest of the
+// fleet still resolves. Services are returned sorted by ContainerID so the
+// daemon's Spec.Hash is stable across passes.
 func Discover(ctx context.Context, rt runtime.Runtime, cfg *config.Config, selfID string) ([]backend.ServiceSpec, []Diagnostic, error) {
 	containers, err := rt.List(ctx)
 	if err != nil {
@@ -122,7 +134,28 @@ func Discover(ctx context.Context, rt runtime.Runtime, cfg *config.Config, selfI
 	var diags []Diagnostic
 
 	for _, c := range containers {
-		spec, ds := Resolve(candidateFromContainer(c), cfg, selfID)
+		// Cheap opt-in gate off the list labels: skip anything that did not ask
+		// to be routed before paying for an Inspect.
+		if !rawBool(c.Labels, "enable") {
+			continue
+		}
+
+		// Inspect the opted-in container to populate Image and LogDriver, which
+		// the list summary does not carry. A failed inspect (the container raced
+		// away, say) is a per-container warning, never fatal: skip it and keep
+		// resolving the rest of the fleet.
+		full, ierr := rt.Inspect(ctx, c.ID)
+		if ierr != nil {
+			diags = append(diags, Diagnostic{
+				ContainerID:   c.ID,
+				ContainerName: c.Name,
+				Severity:      SeverityWarning,
+				Message:       fmt.Sprintf("inspect failed, container skipped: %v", ierr),
+			})
+			continue
+		}
+
+		spec, ds := Resolve(candidateFromContainer(full), cfg, selfID)
 		diags = append(diags, ds...)
 		if spec != nil {
 			specs = append(specs, *spec)
@@ -133,17 +166,10 @@ func Discover(ctx context.Context, rt runtime.Runtime, cfg *config.Config, selfI
 	return specs, diags, nil
 }
 
-// candidateFromContainer maps a core runtime.Container into a Candidate.
-//
-// The current runtime.Container exposes id, name, labels, and the compose
-// project/service pair, but NOT the image reference or the effective log
-// driver. Those two require additions to core (Container.Image from the inspect
-// Config.Image, Container.LogDriver from the inspect HostConfig.LogConfig.Type).
-// Until then they map to the empty string, which Resolve handles: an empty
-// image simply omits the container.image.name attribute, and an empty log
-// driver is treated as json-file compatible. When core grows the fields, wire
-// them here and the image attribute and non-json-file exclusion activate with
-// no other change.
+// candidateFromContainer maps a core runtime.Container into a Candidate. It is
+// fed an Inspect result (not a list summary), so Image and LogDriver are
+// populated: an empty Image omits the container.image.name attribute, and a
+// known non-json-file LogDriver drives the exclusion in Resolve.
 func candidateFromContainer(c runtime.Container) Candidate {
 	return Candidate{
 		ID:             c.ID,
@@ -151,7 +177,7 @@ func candidateFromContainer(c runtime.Container) Candidate {
 		Labels:         c.Labels,
 		ComposeProject: c.Project,
 		ComposeService: c.Service,
-		Image:          "", // core runtime.Container does not expose the image yet
-		LogDriver:      "", // core runtime.Container does not expose the log driver yet
+		Image:          c.Image,
+		LogDriver:      c.LogDriver,
 	}
 }

@@ -177,6 +177,18 @@ func Resolve(cand Candidate, cfg *config.Config, selfID string) (*backend.Servic
 	// the global set for this one container.
 	spec.PromotedLabels = resolvePromotedLabels(norm, cfg)
 
+	// Resolve promoted-label VALUES into StaticAttrs. PromotedLabels carries only
+	// the keys, and the collector (which tails a log file) cannot read a
+	// container's Docker labels off that file, so the values must be resolved
+	// upstream here, where the label map is in hand. Each promoted key is looked
+	// up verbatim in the raw label map and folded into StaticAttrs under its own
+	// key. A promoted key the container does not carry is a no-op. On a key
+	// collision an explicit bilgeline.attr.<key> wins: a static attr the operator
+	// set by hand is never overwritten by a promoted label of the same key.
+	// PromotedLabels stays populated as informational, but the renderer now reads
+	// real values through StaticAttrs.
+	spec.StaticAttrs = promoteLabelValues(spec.StaticAttrs, spec.PromotedLabels, cand.Labels)
+
 	// raw operators: verbatim passthrough from the profile's operators block.
 	if profile != nil && len(profile.Operators) > 0 {
 		spec.RawOperators = profile.Operators
@@ -376,6 +388,30 @@ func resolvePromotedLabels(norm map[string]string, cfg *config.Config) []string 
 		base = cfg.Labels
 	}
 	return unionStrings(base, keys)
+}
+
+// promoteLabelValues resolves each promoted label KEY to its VALUE from the
+// container's raw label map and folds it into attrs under the same key. It never
+// overwrites an existing entry, which gives an explicit bilgeline.attr.<key> (or
+// a profile attr the label did not override) precedence over a promoted label of
+// the same key. A promoted key the container does not carry, or carries empty,
+// is a no-op. attrs may be nil; the result is nil only when nothing was promoted
+// and attrs was already nil, matching the zero value the renderer expects.
+func promoteLabelValues(attrs map[string]string, promoted []string, labels map[string]string) map[string]string {
+	for _, key := range promoted {
+		v, ok := labels[key]
+		if !ok || v == "" {
+			continue // container lacks this label: nothing to promote
+		}
+		if _, exists := attrs[key]; exists {
+			continue // explicit static attr wins on a key collision
+		}
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		attrs[key] = v
+	}
+	return attrs
 }
 
 // resolveRoutes resolves the destination csv into routes. With no destination
