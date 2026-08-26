@@ -1,0 +1,79 @@
+# Example bilgeline.yml. Every field is optional; a missing or empty file is
+# valid, and the surviving BILGELINE_* environment variables overlay onto it
+# (env wins over the file), so env-only operation works too.
+#
+# Nothing in this file is ever a literal secret. Under bilgeline's S1 secrets
+# model, a destination setting may carry a ${env:VAR} reference (see the loki
+# Authorization header below): bilgeline copies that string VERBATIM into the
+# generated collector config and never expands it. You provision the matching
+# env vars (LOKI_BEARER here) on your COLLECTOR container, e.g. via SOPS at
+# deploy time. bilgeline's own process holds no destination credentials.
+
+# Fallback collector container identity, used only when no container carries the
+# primary bilgeline.collector=true marker label. The marker is preferred; this
+# is the backstop when you would rather name the collector here.
+collector: otelcol
+
+# Destination a routed container falls back to when its bilgeline.destination
+# label names none. Must name a destination defined below, and must not be
+# "none" (the reserved route-nowhere sentinel). Overridable by
+# BILGELINE_DEFAULT_DESTINATION.
+default_destination: loki
+
+# Where bilgeline writes the generated collector config, on the volume shared
+# read-only into the collector container. Defaults to /config/otelcol.yaml.
+shared_config_path: /config/otelcol.yaml
+
+# Socket-churn coalescing window (a Go duration). Compose up and crash-loop
+# bursts within this window collapse into one regenerate. Defaults to 2s.
+# Overridable by BILGELINE_DEBOUNCE.
+debounce: 2s
+
+# Fleet-wide container label keys promoted to resource attributes on every
+# routed container, additive to each container's own bilgeline.labels.
+# BILGELINE_LABELS unions more keys onto this set.
+labels:
+  - com.docker.compose.project
+
+# Named sinks logs are routed to. A container selects one or more by name via
+# its bilgeline.destination label; default_destination above picks one when a
+# container names none. The built-in "debug" name always exists even if you do
+# not define it, but defining it lets you point the collector's debug exporter
+# verbosity where you want.
+destinations:
+  # Loki over OTLP HTTP. The bearer token is an env reference, resolved by the
+  # collector at config load, never stored here in the clear.
+  loki:
+    type: otlphttp
+    endpoint: https://loki.home.lan/otlp
+    headers:
+      Authorization: "Bearer ${env:LOKI_BEARER}"
+
+  # A local file archive. Any setting the file exporter takes beyond path can be
+  # added inline here and is passed through verbatim.
+  archive:
+    type: file
+    path: /archive/logs
+
+  # The collector debug exporter, handy for "point this container at debug for
+  # ten minutes" troubleshooting.
+  debug:
+    type: debug
+
+# Named processing profiles, the label grammar's escape hatch. A container
+# selects one by name via bilgeline.profile; explicit labels on the container
+# override the profile's corresponding fields. A profile name must not shadow a
+# reserved parser name (json, logfmt, none, auto, debug).
+profiles:
+  springboot:
+    multiline: '^\d{4}-\d{2}-\d{2}'
+    parse:
+      type: regex
+      pattern: '^(?P<ts>\S+ \S+)\s+(?P<level>\w+)\s+(?P<msg>.*)$'
+      timestamp:
+        field: ts
+        layout: '%Y-%m-%d %H:%M:%S'
+      level:
+        field: level
+    drop:
+      - 'Tomcat started on port'
