@@ -1,0 +1,68 @@
+name: Release
+
+# Publishes ghcr.io/tagwright/bilgeline on a v* tag.
+#
+# GOTCHAS, read before the first real release:
+#
+#  1. core must be published. The image build below uses `context: .` (a lone
+#     checkout of this repo), which works only once github.com/tagwright/core is
+#     a published module and the Dockerfile has been simplified to a
+#     single-context build (drop the `replace` in go.mod and the core COPY). Until
+#     then the Dockerfile needs a parent context holding both core/ and
+#     bilgeline/, which this workflow does NOT provide, so this build fails on the
+#     core fetch exactly like CI does. Same blocker ballast had with beacon.
+#
+#  2. ghcr package visibility. The first publish creates the ghcr package as
+#     PRIVATE. Flip it to public ONCE, by hand, in the package settings on
+#     GitHub after that first push. Later pushes keep whatever visibility you set.
+#
+#  3. tag vs VERSION. The image tag here comes from the git tag (type=semver
+#     turns v00.01.00b1 into the image tag), but the binary's own --version comes
+#     from the VERSION file baked in at build time (main.version). They must
+#     agree: before cutting a real release, make sure the VERSION file matches the
+#     tag you are about to push (bump VERSION, commit, then tag), or pass the
+#     version as a build-arg instead. A tag that disagrees with VERSION ships an
+#     image whose `bilgeline version` lies about which build it is.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/tagwright/bilgeline
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
