@@ -27,6 +27,14 @@ services:
   # On later boots the file already exists on the named volume and this is a
   # no-op. Without it the collector would crash-loop for the ~1-2s before
   # bilgeline first writes the config; the seed removes that window entirely.
+  #
+  # It also prepares the collector's checkpoint volume. The collector runs
+  # non-root (see otel-collector below), and a fresh named volume is root:root,
+  # so without this the non-root collector could not write its filelog
+  # checkpoints and the file_storage extension would fail. The seed runs as root
+  # at volume-creation time, so it hands the checkpoint dir to the collector's
+  # uid. If you switch the collector to the "0:0" root fallback, this chown is
+  # simply harmless (root can write a dir owned by uid 10001 all the same).
   config-seed:
     image: busybox:1.37
     command:
@@ -65,8 +73,16 @@ services:
         # shared config dir to that uid. Idempotent: harmless to re-run.
         chown -R 65532:65532 /config
         echo "chowned /config to uid 65532 (bilgeline nonroot)"
+        # The collector runs non-root (uid 10001, gid 0) and writes its filelog
+        # checkpoints here. A fresh named volume is root:root, so hand the dir to
+        # that uid or the non-root collector's file_storage extension cannot
+        # write. Idempotent: harmless to re-run, harmless under the root fallback.
+        mkdir -p /checkpoints
+        chown -R 10001:0 /checkpoints
+        echo "chowned /checkpoints to uid 10001 gid 0 (collector nonroot)"
     volumes:
       - shared-config:/config
+      - collector-checkpoints:/checkpoints
     networks:
       - bilgeline
     restart: "no"
@@ -98,15 +114,32 @@ services:
     depends_on:
       config-seed:
         condition: service_completed_successfully
-    # Run the collector as root. The filelog source it tails,
-    # /var/lib/docker/containers/*/*-json.log, is written by the Docker daemon
-    # as root:root mode 0640, so the collector image's default uid (10001)
-    # cannot read a single log byte: the receiver silently tails nothing and the
-    # whole pipeline ships nothing with no error. Reading root-owned host logs is
-    # the one job this collector exists for, so it runs as root. This also lets
-    # it own its checkpoint volume with no extra volume-permission dance. If your
-    # host makes the json logs readable by another uid/gid, pin that instead.
-    user: "0:0"
+    # ---------------------------------------------------------------------------
+    # Collector user: NON-ROOT by default (the secure default), with a root
+    # fallback documented below.
+    #
+    # SECURE DEFAULT (this line): uid 10001, GROUP 0 (the root group). This drops
+    # root while still reading the logs. Docker writes its json-file logs as
+    # root:root mode 0640, so the root GROUP has read on them, and bilgeline
+    # generates EXPLICIT per-container include paths (never a directory glob), so
+    # the collector only has to traverse the 0710 container directories (gid 0
+    # has the +x) and read the 0640 log files (gid 0 has the +r). No root needed.
+    # 10001 is this image's conventional nonroot uid. The checkpoint volume is
+    # handed to this uid by config-seed above so file_storage can write.
+    user: "10001:0"
+    #
+    # ROOT FALLBACK: if your host's json-file logs are not group-0 readable (a
+    # different log driver, remapped ownership, tighter directory modes, or you
+    # simply want the least-fuss setup), run the collector as root instead by
+    # replacing the line above with:
+    #
+    #     user: "0:0"
+    #
+    # Root reads any log byte and owns the checkpoint volume with no permission
+    # dance (the config-seed chown is then merely harmless). It is the simplest
+    # thing that always works; the non-root default is the more secure thing that
+    # works on a stock Docker host. See docs/DEPLOY.md for the full rationale.
+    # ---------------------------------------------------------------------------
     # The marker bilgeline finds the collector by. This is the primary
     # mechanism; the `collector:` key in bilgeline.yml is only a fallback.
     labels:
