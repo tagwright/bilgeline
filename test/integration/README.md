@@ -72,10 +72,17 @@ Each case is also runnable on its own, e.g. `test/integration/00_core_route.sh`.
   the shared config volume and hands that directory to uid 65532, mirroring the
   fixed `docker-compose.yml` config-seed. Both are the minimal, legitimate
   grants any real deployment arranges.
-- The collector runs as **root** (`--user 0:0`). Docker's json-file logs are
-  `root:root` mode `0640`; the collector image's default uid (10001) cannot read
-  them, so it would silently tail nothing. This mirrors the `user: "0:0"` the
-  fixed `docker-compose.yml` sets on the collector.
+- The collector runs **non-root with the root group** (`--user 10001:0`),
+  mirroring the shipped `docker-compose.yml` default. Docker's json-file logs are
+  `root:root` mode `0640`, so gid 0 has read on them, and bilgeline generates
+  EXPLICIT per-container include paths rather than a directory glob, so the
+  collector only traverses the `0710` container dirs (gid 0 has the `+x`) and
+  reads the `0640` files (gid 0 has the `+r`) with no root. The collector-side
+  volumes it must write (the filelog checkpoints, and in this harness the
+  file-exporter output) start out `root:root`, so the cases hand them to uid
+  10001 before starting the collector (`chown_vol`), the same checkpoint-volume
+  prep the shipped compose config-seed performs. The `user: "0:0"` root fallback
+  documented in `docs/DEPLOY.md` is for hosts whose log perms or driver differ.
 
 See `../../docs/TESTING.md` for the honest coverage map: what these prove live,
 what is unit/compile-only, and what is genuinely untested.

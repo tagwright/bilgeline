@@ -13,10 +13,19 @@ set -u
 PREFIX="bilgeline-itest"
 IMAGE="${BILGELINE_ITEST_IMAGE:-bilgeline-itest:local}"
 COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:0.159.0"
-# The collector runs as root: Docker's json-file logs are root:root 0640 and
-# unreadable by the image's default uid 10001, so the receiver would silently
-# tail nothing. This mirrors the fixed docker-compose.yml (user: "0:0").
-COLLECTOR_USER="0:0"
+# The collector runs NON-ROOT with the root GROUP (gid 0), mirroring the shipped
+# docker-compose.yml default. Docker's json-file logs are root:root mode 0640,
+# so group-root has read on them, and bilgeline generates EXPLICIT per-container
+# include paths (not a directory glob), so the collector only needs to traverse
+# the 0710 container dirs (gid 0 has the +x) and read the 0640 files (gid 0 has
+# the +r). No root required. 10001 is the collector image's conventional nonroot
+# uid. The checkpoint (and, in this harness, the file-exporter output) volumes
+# are handed to this uid before the collector starts, see chown_vol below.
+COLLECTOR_USER="10001:0"
+# The uid:gid the collector-side volumes (checkpoints, the harness file output)
+# are chowned to so the non-root collector can write them, matching the
+# checkpoint-volume prep the shipped compose config-seed performs.
+COLLECTOR_VOL_OWNER="10001:0"
 BUSYBOX_IMAGE="busybox:1.37"
 ALPINE_IMAGE="alpine:3.20"
 

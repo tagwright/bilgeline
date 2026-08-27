@@ -41,6 +41,12 @@ vol_create checkpoints
 vol_create out
 vol_create blconf
 seed_config config
+# Hand the collector-side volumes to the non-root collector's uid, the same
+# checkpoint-volume ownership prep the shipped compose config-seed performs. A
+# fresh named volume is root:root, so without this the gid-0 nonroot collector
+# could not write its filelog checkpoints (or, here, the file-exporter output).
+chown_vol checkpoints "$COLLECTOR_VOL_OWNER"
+chown_vol out "$COLLECTOR_VOL_OWNER"
 
 # Write the bilgeline.yml into a config volume the bilgeline container mounts.
 cat <<YML | docker run --rm -i -v "${PREFIX}-blconf:/etc/bilgeline" "$BUSYBOX_IMAGE" sh -c 'cat > /etc/bilgeline/bilgeline.yml'

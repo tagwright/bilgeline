@@ -23,6 +23,10 @@ log "local driver: a --log-driver local producer must be excluded, json-file mus
 net_create
 vol_create config; vol_create checkpoints; vol_create out; vol_create blconf
 seed_config config
+# Hand the collector-side volumes to the non-root collector's uid, the same
+# checkpoint-volume ownership prep the shipped compose config-seed performs.
+chown_vol checkpoints "$COLLECTOR_VOL_OWNER"
+chown_vol out "$COLLECTOR_VOL_OWNER"
 
 cat <<YML | docker run --rm -i -v "${PREFIX}-blconf:/etc/bilgeline" "$BUSYBOX_IMAGE" sh -c 'cat > /etc/bilgeline/bilgeline.yml'
 default_destination: itestfile
