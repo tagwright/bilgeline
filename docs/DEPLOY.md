@@ -65,6 +65,74 @@ use it:
 The collector image is pinned to `0.159.0`, the version bilgeline's config
 generator is validated against. When you upgrade one, review the other.
 
+## The collector's user
+
+The compose stack runs the collector as a non-root user by default, because that
+is the more secure default and it works on a stock Docker host. There is a
+one-line root fallback for hosts where the default does not fit. This section
+covers both and when to reach for the fallback.
+
+### The secure default: non-root with the root group
+
+The shipped compose sets `user: "10001:0"` on the collector: uid 10001 (this
+image's conventional nonroot uid) with GID 0, the root group. That combination
+still reads the logs without being root, for two reasons that hold on a stock
+Docker install:
+
+- Group read on the log files. Docker writes its json-file logs as `root:root`
+  mode `0640`. The `0640` grants the owning GROUP read, and that group is `0`.
+  So a process running with GID 0 can read every log byte without being uid 0.
+- Explicit paths, not a directory glob. bilgeline generates an explicit
+  per-container include path for each routed container
+  (`/var/lib/docker/containers/<id>/<id>-json.log`), never a wildcard over the
+  directory. That matters because Docker's container directories are mode `0710`
+  (`root:root`): the root group gets the `+x` to traverse into a known path but
+  not the `+r` to list the directory. A glob would need to list and would find
+  nothing as GID 0. Explicit paths only need traverse plus the file read, both
+  of which GID 0 has. This is why the non-root default works at all.
+
+The one wrinkle a non-root collector introduces is its checkpoint volume. The
+`file_storage` extension writes filelog read offsets to
+`/var/lib/otelcol/file_storage` on a named volume, and a fresh named volume is
+`root:root`, which a non-root process cannot write. The stack handles this the
+same way it handles the shared config directory: the one-shot `config-seed`
+service chowns the checkpoint volume to uid 10001 before the collector starts,
+so the non-root collector owns its checkpoint directory and `file_storage`
+writes succeed. You do not have to do anything for this. It is in the compose
+file.
+
+The generated config the collector reads is world-readable (bilgeline writes it
+mode `0644` with an atomic temp-file-and-rename), so a non-root collector reads
+it with no extra grant.
+
+### The root fallback: `user: "0:0"`
+
+If the secure default does not fit your host, run the collector as root instead.
+Replace the collector's `user:` line in `docker-compose.yml` with:
+
+```
+user: "0:0"
+```
+
+Root reads any log byte regardless of ownership or directory mode, and owns the
+checkpoint volume with no permission step (the `config-seed` chown becomes merely
+harmless). It is the simplest thing that always works.
+
+Reach for the root fallback when:
+
+- Your host does not make the json-file logs readable by group 0. A different
+  log driver, user-namespace remapping that changes log ownership, or tighter
+  directory modes than the stock `0710` can all leave a GID 0 process unable to
+  read. If the collector under the non-root default tails nothing (the pipeline
+  ships nothing with no error), this is the first thing to suspect.
+- You want the least-fuss setup and are comfortable running this one container as
+  root. Reading root-owned host logs is the collector's whole job, and it holds
+  your destination secrets either way, so some operators simply prefer root here.
+
+The trade is straightforward: the non-root default is the more secure posture and
+works on a stock Docker host, the root fallback is the always-works posture. The
+stack ships secure and lets you fall back in one line.
+
 ## The secret model (S1)
 
 Secrets never live in the compose file, in labels, or in any file bilgeline
