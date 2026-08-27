@@ -56,6 +56,15 @@ services:
         else
           echo "/config/otelcol.yaml already present, leaving it"
         fi
+        # bilgeline runs as distroless nonroot (uid 65532) and writes the
+        # generated config here with an atomic temp-file-and-rename, which needs
+        # write on the /config directory itself, not just the file. A fresh
+        # named volume mounts as root:root 0755, so without this the nonroot
+        # bilgeline cannot write and every reconcile fails "permission denied".
+        # The seed runs as root at the volume-creation moment, so it hands the
+        # shared config dir to that uid. Idempotent: harmless to re-run.
+        chown -R 65532:65532 /config
+        echo "chowned /config to uid 65532 (bilgeline nonroot)"
     volumes:
       - shared-config:/config
     networks:
@@ -89,6 +98,15 @@ services:
     depends_on:
       config-seed:
         condition: service_completed_successfully
+    # Run the collector as root. The filelog source it tails,
+    # /var/lib/docker/containers/*/*-json.log, is written by the Docker daemon
+    # as root:root mode 0640, so the collector image's default uid (10001)
+    # cannot read a single log byte: the receiver silently tails nothing and the
+    # whole pipeline ships nothing with no error. Reading root-owned host logs is
+    # the one job this collector exists for, so it runs as root. This also lets
+    # it own its checkpoint volume with no extra volume-permission dance. If your
+    # host makes the json logs readable by another uid/gid, pin that instead.
+    user: "0:0"
     # The marker bilgeline finds the collector by. This is the primary
     # mechanism; the `collector:` key in bilgeline.yml is only a fallback.
     labels:
