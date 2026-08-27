@@ -81,6 +81,8 @@ type fakeBackend struct {
 	lastSpec    backend.Spec
 	renderErr   error
 	healthErr   error
+	applyErr    error
+	applyResult backend.ApplyResult
 }
 
 func (b *fakeBackend) Render(spec backend.Spec) (backend.RenderedConfig, error) {
@@ -98,6 +100,12 @@ func (b *fakeBackend) Apply(ctx context.Context, cfg backend.RenderedConfig) (ba
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.applyCalls++
+	if b.applyErr != nil {
+		return b.applyResult, b.applyErr
+	}
+	if b.applyResult.Action != "" {
+		return b.applyResult, nil
+	}
 	return backend.ApplyResult{Action: backend.ActionReloaded}, nil
 }
 

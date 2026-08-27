@@ -3,12 +3,16 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/config"
 	"github.com/tagwright/core/runtime"
 )
@@ -71,6 +75,37 @@ func TestReconcileChangeReapplies(t *testing.T) {
 	render, apply := be.counts()
 	if render != 2 || apply != 2 {
 		t.Errorf("Render/Apply = %d/%d, want 2/2 after a real change", render, apply)
+	}
+}
+
+// TestReconcileApplyErrorLogsDetail proves that when Apply returns an error, the
+// reconcile still logs the ApplyResult.Detail alongside the terse error. This is
+// the observability an integration run caught: a collector wedged by a missing
+// ${env:VAR} returns only "did not recover after restart", while Apply's Detail
+// (which names the missing var and narrates the wedge) is the one actionable
+// hint and must not be discarded.
+func TestReconcileApplyErrorLogsDetail(t *testing.T) {
+	rt := newFakeRuntime(routedContainer("aaaaaaaaaaaa", "web"))
+	be := &fakeBackend{
+		applyErr: errors.New("collector \"col\" did not recover after restart"),
+		applyResult: backend.ApplyResult{
+			Action: backend.ActionRestarted,
+			Detail: "collector \"col\" died again; collector is missing referenced env var LOKI_BEARER",
+		},
+	}
+
+	var buf bytes.Buffer
+	r := newTestReconciler(rt, be, 10*time.Millisecond)
+	r.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	r.reconcile(context.Background())
+
+	out := buf.String()
+	if !strings.Contains(out, "apply failed") {
+		t.Fatalf("expected an apply-failed log line, got: %s", out)
+	}
+	if !strings.Contains(out, "missing referenced env var LOKI_BEARER") {
+		t.Errorf("apply-failed log must carry the ApplyResult.Detail hint; got: %s", out)
 	}
 }
 

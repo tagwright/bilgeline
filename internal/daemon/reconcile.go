@@ -70,8 +70,18 @@ func (r *reconciler) reconcile(ctx context.Context) {
 
 	result, err := r.backend.Apply(ctx, rendered)
 	if err != nil {
-		r.logger.Error("apply failed", "backend", r.backend.Name(), "error", err)
-		notify(r.notifier, beacon.LevelError, "bilgeline: apply failed", err.Error())
+		// result.Detail carries the actionable context Apply assembled even on
+		// failure: the collector name, the wedge-recovery narrative, and any
+		// env-preflight warnings naming a missing ${env:VAR}. The returned error
+		// itself is terse ("collector X did not recover after restart"), so a
+		// missing-env-var wedge would otherwise reach the operator with the one
+		// hint that explains WHY discarded. Log and alert the detail alongside it.
+		r.logger.Error("apply failed", "backend", r.backend.Name(), "error", err, "detail", result.Detail)
+		body := err.Error()
+		if result.Detail != "" {
+			body = result.Detail + ": " + err.Error()
+		}
+		notify(r.notifier, beacon.LevelError, "bilgeline: apply failed", body)
 		return
 	}
 
