@@ -319,6 +319,26 @@ destinations:
 	}
 }
 
+// TestDefaultDestinationDebug pins that the reserved "debug" sink is a valid
+// default_destination even when the destinations map does not define it, the
+// same always-valid treatment discovery gives a per-container debug route. This
+// guards the config-vs-discovery consistency an integration run caught: bilgeline
+// refused to start on default_destination: debug though a container routing to
+// debug was fine.
+func TestDefaultDestinationDebug(t *testing.T) {
+	yaml := `
+default_destination: debug
+shared_config_path: /config/otelcol.yaml
+`
+	c, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: default_destination: debug should be valid, got %v", err)
+	}
+	if c.DefaultDestination != "debug" {
+		t.Errorf("DefaultDestination = %q, want debug", c.DefaultDestination)
+	}
+}
+
 func TestValidateAggregatesMultiple(t *testing.T) {
 	// Two independent faults: a bad type and an undefined default. Validate
 	// should surface both, not stop at the first.

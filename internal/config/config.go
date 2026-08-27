@@ -172,6 +172,12 @@ const (
 	// noneSentinel is the reserved "route nowhere" / "explicitly nothing"
 	// value. It is never a valid default_destination.
 	noneSentinel = "none"
+
+	// debugDestination is the built-in debug exporter sink. Like discovery's
+	// destinationValid, it is always a valid destination name even when the
+	// destinations map does not define it, so it is an acceptable
+	// default_destination without an explicit definition.
+	debugDestination = "debug"
 )
 
 // envRefPattern matches a ${env:NAME} reference and captures NAME. NAME follows
@@ -259,7 +265,7 @@ func (c *Config) Validate() error {
 	if c.DefaultDestination != "" {
 		if c.DefaultDestination == noneSentinel {
 			errs = append(errs, fmt.Errorf("default_destination: %q is not a valid default", noneSentinel))
-		} else if _, ok := c.Destinations[c.DefaultDestination]; !ok {
+		} else if _, ok := c.Destinations[c.DefaultDestination]; !ok && c.DefaultDestination != debugDestination {
 			errs = append(errs, fmt.Errorf("default_destination: %q names no defined destination", c.DefaultDestination))
 		}
 	}
