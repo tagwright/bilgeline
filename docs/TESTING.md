@@ -32,7 +32,7 @@ Two layers, in increasing order of how much they prove:
 
 ## What is integration-PROVEN (live, against a real socket + real collector)
 
-All five cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
+All ten cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
 
 - **The core route, end to end** (`00_core_route.sh`). A container labeled
   `bilgeline.enable=true` / `bilgeline.destination=itestfile` is discovered;
@@ -99,6 +99,40 @@ All five cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
   present secret's VALUE appears nowhere in the generated config, and it appears
   in NO bilgeline log line. bilgeline never expands a secret.
 
+- **The rich label grammar, at the destination bytes** (`20_parse_json.sh`,
+  `21_multiline.sh`, `22_filtering.sh`, `23_fanout.sh`, `24_stream.sh`). The
+  features that used to be render- and `validate`-proven only are now run
+  through a live collector and asserted against the exported OTLP JSON:
+
+  - **`bilgeline.parse=json`** promotes JSON body fields to record ATTRIBUTES
+    (asserted on the unescaped attribute-key form, which cannot be satisfied by
+    the same text sitting escaped in the raw body), and the DEFAULT level-field
+    probe (`level`, `severity`, `lvl`) sets the record severity: an `error` line
+    maps to `severityNumber 17` and an `info` line to `severityNumber 9`.
+  - **`bilgeline.multiline`** recombines a timestamped first line and its
+    indented continuation lines into ONE record: the first-line token and the
+    last continuation line land in a single record body, and no continuation
+    line escapes into a record of its own.
+  - **Filtering** (`bilgeline.drop.<n>` indexed form + `bilgeline.level.min=warn`
+    over a json level field): the wanted at/above-floor records arrive; the
+    below-floor (`info`, `debug`) records AND the error-level health-check
+    records matched by the drop regexes are all absent. The health-check lines
+    are error-level on purpose, so only a working drop, not the floor, can
+    remove them.
+  - **Multi-destination fan-out** (`bilgeline.destination=fileA,fileB`): a
+    fan-out producer lands in BOTH file outputs, while a second producer bound to
+    `fileA` only lands in fileA and NOT fileB. This proves the routing connector
+    builds one table entry per distinct destination set and does not leak a
+    narrower set into the other output.
+  - **Stream selection** (`bilgeline.stream=stderr`): a producer writing to both
+    streams routes only its stderr lines, stdout is dropped, and the routed
+    records carry `log.iostream=stderr`.
+
+  These use the `file` exporter so the exported records are byte-verifiable with
+  no external credentials. This pass surfaced no generator bug: the operator
+  chain, the shared filter conditions, and the routing table all behaved at
+  runtime exactly as the golden YAML describes.
+
 - **Alert delivery through beacon (config to the wire).** The
   notifications/telemetry path is proven at two levels. Unit
   (`internal/daemon/notifier_test.go`, `internal/secret/resolver_test.go`,
@@ -132,13 +166,27 @@ All five cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
   adapter in `core/runtime`, unit-covered there, but the integration harness
   runs Docker only. Proving the podman path needs a real Podman host.
 
-- **The full processing grammar** (multiline recombine, regex/json/logfmt
-  parse, timestamp and severity extraction, drops, stream filtering, promoted
-  labels, profiles, multi-destination fan-out and shared-signature receiver
-  grouping). All are unit-tested at the render layer against golden YAML, and
-  the live cases here use the simple `parse=none` path. The generated operators
-  for the richer grammar are not byte-verified against a live collector's output
-  in this harness.
+- **The rest of the processing grammar** not covered by the live cases above.
+  Now live-proven at the destination bytes: `parse=json`, default severity
+  probing, `multiline` recombine, `drop` (indexed) + `level.min` filtering,
+  `stream` selection, and multi-destination fan-out (see the integration-proven
+  section). Still render-/`validate`-proven only, NOT byte-verified against a
+  live collector here:
+
+  - **`parse=logfmt`** (the `key_value_parser` operator) and the **profile-only
+    `parse` regex** path with named groups.
+  - **Timestamp extraction** (`time_parser` from a profile's timestamp layout)
+    and **custom severity mappings** (a profile's `level_mapping`).
+  - **Promoted labels** (`bilgeline.labels`). The renderer deliberately does
+    NOT stamp these: the collector cannot read a container's labels from a tailed
+    file, so the daemon must resolve the label VALUES into `StaticAttrs` upstream.
+    That daemon-side resolution is unit-covered, not exercised end to end here.
+  - **Named profiles** end to end (the label-over-profile-over-global merge).
+  - **Shared-signature receiver grouping** (two same-signature services
+    collapsing into one filelog receiver with two include paths). Proven at the
+    render layer (`shared_signature.yaml`), not forced live.
+
+  All of these remain unit-tested at the render layer against golden YAML.
 
 ## What is UNTESTED (needs resources this environment does not have)
 

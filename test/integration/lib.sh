@@ -133,6 +133,29 @@ wait_for_token() {
   return 1
 }
 
+# wait_for_file_token retries until the token ($3, a grep -E regex) appears in a
+# named file inside the out volume, or times out. Generalizes wait_for_token to
+# an arbitrary file name so the fan-out case can wait on two destination files.
+# $1 = volume suffix, $2 = file name inside the volume, $3 = token, $4 = timeout.
+wait_for_file_token() {
+  local vol="$1" file="$2" token="$3" timeout="${4:-40}" i=0
+  while [ "$i" -lt "$timeout" ]; do
+    if read_vol_file "$vol" "$file" | grep -Eq "$token"; then
+      return 0
+    fi
+    i=$((i+1)); sleep 1
+  done
+  return 1
+}
+
+# count_records counts the exported log records in a volume's logs.json whose
+# body contains the token ($2). The file exporter emits OTLP JSON with one
+# "body" object per record, so counting body occurrences that carry the token is
+# a robust record count without a JSON parser. $1 = volume suffix, $2 = token.
+count_records() {
+  read_vol_file "$1" logs.json | grep -o "\"stringValue\":\"[^\"]*$2[^\"]*\"" | wc -l | tr -d ' '
+}
+
 # wait_for_log retries until the pattern ($2, a grep -E regex) appears in a
 # container's logs. $1 = container name suffix, $2 = pattern, $3 = timeout.
 wait_for_log() {

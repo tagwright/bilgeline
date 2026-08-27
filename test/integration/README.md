@@ -64,6 +64,11 @@ Each case is also runnable on its own, e.g. `test/integration/00_core_route.sh`.
 | `11_ambiguity.sh` | TWO marked collectors is a hard identity error: config written, NO signal sent, both candidates untouched. |
 | `12_local_driver.sh` | A `--log-driver local` producer is excluded (its lines never reach the destination, its id never enters the generated config) and bilgeline warns; a json-file producer alongside it still routes. |
 | `13_env_preflight.sh` | A destination referencing a `${env:VAR}` the collector lacks yields a warning that NAMES the var; `${env:...}` references are copied verbatim; a present secret's VALUE never appears in the generated config nor in any bilgeline log line (S1 secrets model). |
+| `20_parse_json.sh` | `bilgeline.parse=json`: structured JSON bodies have their fields promoted to record ATTRIBUTES (matched on the unescaped attribute-key form, distinct from the raw body), and default level-field probing maps `error` to severityNumber 17 and `info` to severityNumber 9. |
+| `21_multiline.sh` | `bilgeline.multiline=<regex>`: a timestamped stack trace plus indented continuation lines is recombined into ONE record (the first-line token and the last continuation line share one body), with no orphaned continuation-only records. |
+| `22_filtering.sh` | `bilgeline.drop.<n>` + `bilgeline.level.min=warn` over a json level field: wanted (>= warn, no drop match) records arrive; below-floor (info, debug) AND drop-matching (health-check, error-level) records are all ABSENT. |
+| `23_fanout.sh` | `bilgeline.destination=fileA,fileB`: a fan-out producer lands in BOTH file outputs while a `fileA`-only producer lands in fileA but NOT fileB, proving one routing-table entry per distinct destination set and isolated routing. |
+| `24_stream.sh` | `bilgeline.stream=stderr`: a producer writing to both streams routes only its stderr lines; stdout is dropped and routed records carry `log.iostream=stderr`. |
 
 ## Environment notes
 

@@ -34,7 +34,8 @@ if ! require_images; then
   exit 2
 fi
 
-CASES=(00_core_route 10_mount_guard 11_ambiguity 12_local_driver 13_env_preflight)
+CASES=(00_core_route 10_mount_guard 11_ambiguity 12_local_driver 13_env_preflight \
+       20_parse_json 21_multiline 22_filtering 23_fanout 24_stream)
 
 # Optional filter args: keep only cases whose basename matches any given prefix.
 if [ "$#" -gt 0 ]; then
