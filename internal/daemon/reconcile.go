@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -45,11 +46,29 @@ func (r *reconciler) reconcile(ctx context.Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Track the pass outcome and push it to telemetry once, on the way out,
+	// whichever return path we take. A clean pass reports healthy; a discovery,
+	// render, or apply failure, or a pass that skipped a container on an
+	// error-severity diagnostic, reports degraded with the reason. This is the
+	// event-driven telemetry axis: one Gatus-style push per reconcile, no
+	// background clock. See notifier.report.
+	start := time.Now()
+	ok := true
+	healthMsg := ""
+	defer func() { report(r.notifier, ok, healthMsg, time.Since(start)) }()
+
 	services, diags, err := discovery.Discover(ctx, r.rt, r.cfg, r.selfID)
-	r.routeDiagnostics(diags)
+	if errDiags := r.routeDiagnostics(diags); errDiags > 0 {
+		// Containers were skipped for validation faults. The pass may still apply
+		// cleanly for the rest of the fleet, so continue, but report degraded: a
+		// later apply failure overwrites this with the more severe reason.
+		ok = false
+		healthMsg = fmt.Sprintf("%d container(s) skipped on error diagnostics", errDiags)
+	}
 	if err != nil {
 		r.logger.Error("discovery failed", "error", err)
 		notify(r.notifier, beacon.LevelError, "bilgeline: discovery failed", err.Error())
+		ok, healthMsg = false, "discovery failed: "+err.Error()
 		return
 	}
 
@@ -65,6 +84,7 @@ func (r *reconciler) reconcile(ctx context.Context) {
 	if err != nil {
 		r.logger.Error("render failed", "backend", r.backend.Name(), "error", err)
 		notify(r.notifier, beacon.LevelError, "bilgeline: render failed", err.Error())
+		ok, healthMsg = false, "render failed: "+err.Error()
 		return
 	}
 
@@ -82,6 +102,7 @@ func (r *reconciler) reconcile(ctx context.Context) {
 			body = result.Detail + ": " + err.Error()
 		}
 		notify(r.notifier, beacon.LevelError, "bilgeline: apply failed", body)
+		ok, healthMsg = false, "apply failed: "+body
 		return
 	}
 

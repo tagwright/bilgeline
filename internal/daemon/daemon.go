@@ -67,7 +67,7 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 
 	be := BuildBackend(rt, cfg)
 
-	notifier, err := buildNotifier()
+	notifier, err := buildNotifier(cfg)
 	if err != nil {
 		return fmt.Errorf("daemon: build notifier: %w", err)
 	}
