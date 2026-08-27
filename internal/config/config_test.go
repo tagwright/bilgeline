@@ -308,6 +308,51 @@ destinations:
     endpoint: https://x.home.lan
 `,
 		},
+		{
+			name: "notification unknown type",
+			yaml: `
+notifications:
+  - type: carrierpigeon
+    settings:
+      topic: x
+`,
+		},
+		{
+			name: "notification missing type",
+			yaml: `
+notifications:
+  - min_level: warn
+    settings:
+      topic: x
+`,
+		},
+		{
+			name: "notification bad min_level",
+			yaml: `
+notifications:
+  - type: ntfy
+    min_level: screaming
+    settings:
+      topic: x
+`,
+		},
+		{
+			name: "telemetry unknown type",
+			yaml: `
+telemetry:
+  - type: prometheus
+    settings:
+      url: https://x.home.lan
+`,
+		},
+		{
+			name: "telemetry missing type",
+			yaml: `
+telemetry:
+  - settings:
+      url: https://x.home.lan
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -316,6 +361,70 @@ destinations:
 				t.Fatal("Load: want validation error, got nil")
 			}
 		})
+	}
+}
+
+// TestLoadNotificationsTelemetry pins the notifications, telemetry, and
+// secrets_dir surface: the sections parse, credential values stay secret NAMES
+// (never expanded here), and known types plus levels pass validation.
+func TestLoadNotificationsTelemetry(t *testing.T) {
+	yaml := `
+secrets_dir: /run/bilgeline/secrets
+notifications:
+  - type: ntfy
+    min_level: warn
+    settings:
+      server: https://ntfy.home.lan
+      topic: bilgeline-alerts
+      token_secret: ntfy-bilgeline-token
+  - type: discord
+    min_level: error
+    settings:
+      webhook_secret: discord-bilgeline-webhook
+telemetry:
+  - type: gatus
+    settings:
+      url: https://status.home.lan
+      endpoint_key: infra_bilgeline
+      token_secret: gatus-bilgeline-push-token
+`
+	c, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.SecretsDir != "/run/bilgeline/secrets" {
+		t.Errorf("SecretsDir = %q, want /run/bilgeline/secrets", c.SecretsDir)
+	}
+	if len(c.Notifications) != 2 {
+		t.Fatalf("Notifications len = %d, want 2", len(c.Notifications))
+	}
+	ntfy := c.Notifications[0]
+	if ntfy.Type != "ntfy" || ntfy.MinLevel != "warn" {
+		t.Errorf("channel[0] = %+v, want ntfy/warn", ntfy)
+	}
+	// The token is a secret NAME, carried through verbatim, not resolved here.
+	if got := ntfy.Settings["token_secret"]; got != "ntfy-bilgeline-token" {
+		t.Errorf("channel[0] token_secret = %q, want the literal secret name", got)
+	}
+	if len(c.Telemetry) != 1 || c.Telemetry[0].Type != "gatus" {
+		t.Fatalf("Telemetry = %+v, want one gatus sink", c.Telemetry)
+	}
+	if got := c.Telemetry[0].Settings["endpoint_key"]; got != "infra_bilgeline" {
+		t.Errorf("gatus endpoint_key = %q, want infra_bilgeline", got)
+	}
+}
+
+// TestSecretsDirEnvOverlay pins that BILGELINE_SECRETS_DIR overrides the file's
+// secrets_dir (domain-2 alerting secrets only).
+func TestSecretsDirEnvOverlay(t *testing.T) {
+	yaml := "secrets_dir: /from/file\n"
+	t.Setenv("BILGELINE_SECRETS_DIR", "/from/env")
+	c, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.SecretsDir != "/from/env" {
+		t.Errorf("SecretsDir = %q, want /from/env (env wins over file)", c.SecretsDir)
 	}
 }
 

@@ -7,12 +7,29 @@
 // BILGELINE_* environment variables overlay onto it, so env-only operation
 // works with no file at all.
 //
-// Config never resolves a secret. Under the S1 secrets model, destination
-// settings may carry literal ${env:VAR} reference strings (e.g. an
-// Authorization header of "Bearer ${env:LOKI_BEARER}"). bilgeline copies those
-// verbatim into the generated collector config and never expands them; the user
-// provisions the matching env vars on the collector container. There is no
-// secrets directory and no secret resolution here, by design.
+// bilgeline has TWO distinct, deliberately separated secret domains, and this
+// package's config surface reflects both:
+//
+//  1. EXPORTER / destination secrets (a Loki bearer token, an S3 key, and so
+//     on). These belong to the COLLECTOR's process, not bilgeline's. Under the
+//     S1 secrets model a destination setting may carry a literal ${env:VAR}
+//     reference string (e.g. an Authorization header of "Bearer
+//     ${env:LOKI_BEARER}"). bilgeline copies those verbatim into the generated
+//     collector config and NEVER expands them: the operator provisions the
+//     matching env vars on the collector container. bilgeline resolves no
+//     destination secret, ever. This is the S1 path and it is unchanged.
+//
+//  2. NOTIFICATION / telemetry channel secrets (an ntfy token, a Telegram bot
+//     token, an SMTP password, a Gatus push token). These belong to
+//     bilgeline's OWN process, because the beacon notifier runs inside it. The
+//     Notifications and Telemetry Settings maps below name these secrets (bare
+//     logical names), resolved at send time through internal/secret's
+//     FileEnvResolver from bilgeline's OWN secrets dir (SecretsDir /
+//     BILGELINE_SECRETS_DIR). That directory is for bilgeline's alerting
+//     credentials ONLY, never for exporter/destination creds, which stay on the
+//     collector per domain 1.
+//
+// A Settings value that is a secret is always a NAME, never the literal token.
 package config
 
 import (
@@ -65,6 +82,60 @@ type Config struct {
 	// its bilgeline.profile label. A profile name must not shadow a reserved
 	// parser name (see ReservedParserNames).
 	Profiles map[string]Profile `yaml:"profiles,omitempty"`
+
+	// Notifications is the list of alert channels the daemon reports discovery
+	// and apply diagnostics through, via the beacon notifier that runs inside
+	// bilgeline's process. Each channel: a backend type, a minimum severity, and
+	// a backend-specific settings map whose credential values are secret NAMES
+	// (domain 2, resolved from SecretsDir), never literals. When this list is
+	// empty the daemon still wires beacon's always-on "log" floor channel, so a
+	// diagnostic is never silently swallowed.
+	Notifications []ChannelConfig `yaml:"notifications,omitempty"`
+
+	// Telemetry is the list of health/status push sinks (e.g. a Gatus external
+	// endpoint) the daemon reports reconcile outcomes to. Same secret-by-name,
+	// domain-2 convention as Notifications.
+	Telemetry []TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	// SecretsDir is the directory bilgeline's OWN notification and telemetry
+	// secrets (domain 2) are resolved from by internal/secret's FileEnvResolver.
+	// Overridable by BILGELINE_SECRETS_DIR. Empty means the resolver's built-in
+	// default (secret.DefaultSecretsDir). This directory is for alerting
+	// credentials ONLY: exporter/destination secrets (domain 1) live on the
+	// collector as ${env:VAR} and are never resolved here.
+	SecretsDir string `yaml:"secrets_dir,omitempty"`
+}
+
+// ChannelConfig is one alert channel from the "notifications" list in
+// bilgeline.yml. It is a plain mirror of the beacon notification module's
+// channel shape; config does not import beacon, the daemon maps ChannelConfig
+// onto beacon's own config type when it wires the notifier up. Settings values
+// that are credentials are secret NAMES (domain 2), never literal tokens.
+type ChannelConfig struct {
+	// Type selects the backend, one of the values in ChannelTypes, e.g.
+	// "ntfy", "discord", "smtp", "webhook".
+	Type string `yaml:"type"`
+
+	// MinLevel is the minimum severity this channel fires on: "info", "warn"
+	// (alias "warning"), or "error". Empty means "receive everything" (info).
+	MinLevel string `yaml:"min_level,omitempty"`
+
+	// Settings carries backend-specific config. Credential values are secret
+	// names, resolved at send time through bilgeline's own secret resolver,
+	// never literal tokens or URLs with embedded auth.
+	Settings map[string]string `yaml:"settings,omitempty"`
+}
+
+// TelemetryConfig is one health/status push sink from the "telemetry" list in
+// bilgeline.yml, e.g. a Gatus external-endpoint push. Same non-import and same
+// secret-by-name (domain 2) rule as ChannelConfig.
+type TelemetryConfig struct {
+	// Type selects the sink, one of the values in TelemetryTypes, e.g. "gatus".
+	Type string `yaml:"type"`
+
+	// Settings carries sink-specific config. Credential values are secret
+	// names, never literal.
+	Settings map[string]string `yaml:"settings,omitempty"`
 }
 
 // Destination is one named sink from the "destinations" map in bilgeline.yml. A
@@ -160,6 +231,24 @@ var DestinationTypes = []string{"otlphttp", "otlp", "loki", "elasticsearch", "fi
 // shadow. Mirrors the label grammar's reserved words.
 var ReservedParserNames = []string{"json", "logfmt", "none", "auto", "debug"}
 
+// ChannelTypes is the set of valid notification channel Type values, matching
+// the backends beacon registers (its v1 backend set plus the always-on "log"
+// floor). Validate rejects any other type up front so a typo surfaces at config
+// load rather than as an opaque "unknown backend type" from beacon.New later.
+var ChannelTypes = []string{
+	"log", "smtp", "ntfy", "gotify", "telegram",
+	"discord", "slack", "mattermost", "pushover", "webhook", "matrix",
+}
+
+// TelemetryTypes is the set of valid telemetry sink Type values, matching the
+// sinks beacon registers. v1 is the single "gatus" push sink.
+var TelemetryTypes = []string{"gatus"}
+
+// ChannelLevels is the set of valid notification MinLevel strings (empty is
+// also valid and means "receive everything"). Kept in step with the daemon's
+// level parser.
+var ChannelLevels = []string{"info", "warn", "warning", "error"}
+
 // Defaults applied to any Config that leaves the field unset.
 const (
 	// DefaultSharedConfigPath is where the generated collector config is written
@@ -229,6 +318,9 @@ func overlayEnv(cfg *Config) {
 	if v, ok := os.LookupEnv("BILGELINE_LABELS"); ok {
 		cfg.Labels = unionStrings(cfg.Labels, splitList(v))
 	}
+	if v, ok := os.LookupEnv("BILGELINE_SECRETS_DIR"); ok {
+		cfg.SecretsDir = v
+	}
 }
 
 // applyDefaults fills sane defaults for anything unset after the file and env
@@ -280,6 +372,33 @@ func (c *Config) Validate() error {
 		if contains(ReservedParserNames, name) {
 			errs = append(errs, fmt.Errorf("profile %q: shadows a reserved parser name (%s)",
 				name, strings.Join(ReservedParserNames, ", ")))
+		}
+	}
+
+	// Notification channels: each must name a beacon-supported backend type and,
+	// if set, a known min_level. The Settings themselves are validated by the
+	// backend at build time (a missing required key surfaces from beacon.New);
+	// config validates only what it owns, the type and level enums.
+	for i, ch := range c.Notifications {
+		if ch.Type == "" {
+			errs = append(errs, fmt.Errorf("notifications[%d]: missing type", i))
+		} else if !contains(ChannelTypes, ch.Type) {
+			errs = append(errs, fmt.Errorf("notifications[%d]: invalid type %q, want one of %s",
+				i, ch.Type, strings.Join(ChannelTypes, ", ")))
+		}
+		if ch.MinLevel != "" && !contains(ChannelLevels, strings.ToLower(strings.TrimSpace(ch.MinLevel))) {
+			errs = append(errs, fmt.Errorf("notifications[%d]: invalid min_level %q, want one of %s",
+				i, ch.MinLevel, strings.Join(ChannelLevels, ", ")))
+		}
+	}
+
+	// Telemetry sinks: each must name a beacon-supported sink type.
+	for i, t := range c.Telemetry {
+		if t.Type == "" {
+			errs = append(errs, fmt.Errorf("telemetry[%d]: missing type", i))
+		} else if !contains(TelemetryTypes, t.Type) {
+			errs = append(errs, fmt.Errorf("telemetry[%d]: invalid type %q, want one of %s",
+				i, t.Type, strings.Join(TelemetryTypes, ", ")))
 		}
 	}
 
