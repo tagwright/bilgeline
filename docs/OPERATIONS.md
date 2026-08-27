@@ -81,18 +81,50 @@ An optional `BILGELINE_COLLECTOR_HEALTH_URL` adds a secondary HTTP probe, but it
 is advisory only. A restart is never triggered because that probe was
 unreachable. The container state is always the primary signal.
 
-### Reading the alert
+### How alerts are delivered, and what triggers them
 
 Every discovery and apply problem lands in the structured log stream (the
-always-on floor) and, when a beacon channel is configured, an alert. On an apply
-failure the alert body carries `ApplyResult.Detail` in front of the terse error,
-so the actionable context travels with it: the collector name, the
+always-on `log` floor), and, for every channel you configure in the
+`notifications` section of bilgeline.yml, an alert is also delivered to that
+channel (ntfy, Telegram, Discord, SMTP, and so on). With no `notifications`
+section the log floor is the only channel, so behavior is unchanged from a
+config that never mentions alerting. Configuring channels, the two secret
+domains they draw credentials from, and the Gatus telemetry sink is covered in
+[NOTIFICATIONS.md](NOTIFICATIONS.md).
+
+What fires an alert, and at what level:
+
+- An **error-severity discovery diagnostic** (a container skipped for a bad
+  enum, an unknown destination, an invalid regex, a prefix conflict) alerts at
+  `error`.
+- A **warning-severity diagnostic** (a non-json-file log driver, a dropped
+  ambiguous route) alerts at `warning`.
+- A **discovery, render, or apply failure** alerts at `error`. The socket list
+  failing, the backend failing to render, or the collector failing to recover
+  after its one restart each reaches you as an error alert.
+
+A channel's `min_level` filters what it receives: a channel set to `warn` gets
+warnings and errors but not routine info, a channel set to `error` gets only the
+failures. The `log` floor always receives everything.
+
+On an apply failure the alert body carries `ApplyResult.Detail` in front of the
+terse error, so the actionable context travels with it: the collector name, the
 wedge-recovery narrative, and any env-preflight warning naming a missing
 `${env:VAR}`. A wedged-collector alert reads like `... collector "otel-collector"
 died again after its one recovery restart, giving up; collector is missing
 referenced env var LOKI_BEARER ...`. The missing-var line is usually the actual
 cause: a `${env:VAR}` the collector cannot expand can make it fail to load the
 new config and die on the reload.
+
+### Reconcile health telemetry (Gatus)
+
+Separately from the alert channels, a `telemetry` sink (a Gatus external
+endpoint) receives a health push on every reconcile pass: healthy on a clean
+pass, degraded (with the reason) on a pass that failed or skipped a container on
+an error diagnostic. The push is event-driven, one per reconcile, not on a
+background clock, so set the Gatus endpoint's own interval with bilgeline's
+event-driven nature in mind: a quiet fleet reconciles rarely. See
+[NOTIFICATIONS.md](NOTIFICATIONS.md) for the sink config.
 
 ## Credential rotation means recreating the collector
 

@@ -99,6 +99,21 @@ All five cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
   present secret's VALUE appears nowhere in the generated config, and it appears
   in NO bilgeline log line. bilgeline never expands a secret.
 
+- **Alert delivery through beacon (config to the wire).** The
+  notifications/telemetry path is proven at two levels. Unit
+  (`internal/daemon/notifier_test.go`, `internal/secret/resolver_test.go`,
+  `internal/config/config_test.go`): the config sections parse and validate,
+  the domain-2 secret resolver reads a named token from a file or a
+  `BILGELINE_SECRET_<NAME>` env var with consistent trailing-newline trimming,
+  and `buildNotifier` wires the always-on `log` floor plus configured channels
+  and sinks, delivering a real POST to an httptest ntfy and gatus with the
+  resolved bearer token in the header. Live: a guarded test
+  (`TestBuildNotifierLiveNtfy`, skipped unless `BILGELINE_ITEST_NTFY_URL` is
+  set) stands up a throwaway `bilgeline-itest-ntfy` container, builds the
+  notifier exactly as the daemon does, sends an error alert, and polls ntfy's
+  JSON API to assert the message arrived. Run it with a live ntfy on the itest
+  network, tearing the container down on success and failure.
+
 ## What is unit-proven / compile-only (NOT exercised live here)
 
 - **Live wedge recovery to a healthy collector.** The `watchState` /

@@ -77,3 +77,63 @@ profiles:
         field: level
     drop:
       - 'Tomcat started on port'
+
+# ---------------------------------------------------------------------------
+# Alerting: notifications, telemetry, and bilgeline's OWN secrets dir.
+#
+# IMPORTANT: this is bilgeline's SECOND, SEPARATE secret domain. The credential
+# values below (an ntfy token, a Gatus push token) are secret NAMES, resolved at
+# send time from bilgeline's OWN secrets dir, because the alerting runs inside
+# bilgeline's process. They are NOT the ${env:VAR} destination secrets above:
+# those (LOKI_BEARER) belong to the COLLECTOR and are never resolved here. Keep
+# alerting creds in secrets_dir; keep exporter creds on the collector. Do not mix
+# the two.
+# ---------------------------------------------------------------------------
+
+# Directory bilgeline resolves its OWN alerting secrets from (a file per secret,
+# the file name is the secret name below). A tmpfs you drop the credential files
+# into at deploy time (e.g. via SOPS). Falls back to a BILGELINE_SECRET_<NAME>
+# env var when no file exists. Overridable by BILGELINE_SECRETS_DIR. Defaults to
+# /run/bilgeline/secrets. This dir is for ALERTING creds only, never exporter
+# creds.
+secrets_dir: /run/bilgeline/secrets
+
+# Alert channels the daemon reports discovery and apply diagnostics through. The
+# always-on "log" floor is wired in addition to whatever you list here, so a
+# diagnostic is never lost even with this section empty. Each channel: a backend
+# type, a minimum severity (info, warn, or error; empty means everything), and a
+# backend-specific settings map. Credential values are secret names.
+notifications:
+  # ntfy: POST alerts to a topic. token_secret NAMES a bearer token for a
+  # protected topic; the file /run/bilgeline/secrets/ntfy-bilgeline-token (or
+  # BILGELINE_SECRET_NTFY_BILGELINE_TOKEN) holds the actual token.
+  - type: ntfy
+    min_level: warn
+    settings:
+      server: https://ntfy.home.lan
+      topic: bilgeline-alerts
+      token_secret: ntfy-bilgeline-token
+
+  # A second channel, commented out. Discord fires only on error here; its
+  # webhook_secret setting NAMES the secret holding the webhook URL, resolved
+  # from the same secrets_dir, never the literal URL.
+  # - type: discord
+  #   min_level: error
+  #   settings:
+  #     webhook_secret: discord-bilgeline-webhook
+
+# Health/status push sinks, separate from the alert channels above. bilgeline
+# pushes a reconcile-outcome health result here on every reconcile pass: healthy
+# on a clean pass, degraded (with the reason) on a pass that failed or skipped a
+# container on an error diagnostic. NOTE: this push is event-driven, one per
+# reconcile, so set the Gatus endpoint's own interval with bilgeline's
+# event-driven, no-clock nature in mind (a quiet fleet reconciles rarely).
+telemetry:
+  # Gatus external-endpoint push. url is the Gatus base URL; endpoint_key is the
+  # "group_endpoint-name" key you configured for the external endpoint in Gatus;
+  # token_secret NAMES the bearer token, resolved from secrets_dir.
+  - type: gatus
+    settings:
+      url: https://status.home.lan
+      endpoint_key: infra_bilgeline
+      token_secret: gatus-bilgeline-push-token
