@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package backend defines the pluggable seam bilgeline drives to turn a
 // resolved routing description into a live logging backend, and the

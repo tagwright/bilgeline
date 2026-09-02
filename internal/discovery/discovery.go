@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package discovery turns running containers and their bilgeline.* labels into
 // fully resolved backend.ServiceSpec values: the label reader that realizes the

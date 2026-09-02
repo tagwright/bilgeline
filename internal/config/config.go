@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package config loads bilgeline's daemon configuration from bilgeline.yml:
 // the collector identity fallback, the named destinations logs are routed to,

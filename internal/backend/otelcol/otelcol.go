@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package otelcol is the OpenTelemetry Collector backend: it turns bilgeline's
 // runtime-neutral backend.Spec into a valid, static otelcol-contrib YAML config

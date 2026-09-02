@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Command bilgeline is the label-driven log-routing companion for Docker and
 // Podman: it generates OpenTelemetry Collector configuration from bilgeline.*
