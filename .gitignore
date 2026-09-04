@@ -14,3 +14,8 @@
 *.sops.decrypted
 /run/
 /secrets/
+
+# Internal project docs, versioned centrally in projects-docs, not shipped in the public repo.
+# User-facing docs stay in docs/ and are tracked.
+/CLAUDE.md
+/CHARTER.md
