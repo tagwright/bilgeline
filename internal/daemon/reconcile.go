@@ -32,6 +32,11 @@ type reconciler struct {
 	selfID   string
 	debounce time.Duration
 
+	// clock reads the wall clock for the per-pass telemetry duration. A wiring
+	// test injects a fake so the reported duration is deterministic; nil defaults
+	// to time.Now, so production behavior is unchanged.
+	clock func() time.Time
+
 	// mu serializes reconcile so an Apply can never overlap the next pass. The
 	// loop is single-goroutine so contention is not the point; the lock makes the
 	// "one Apply at a time" guarantee explicit and guards lastHash.
@@ -53,10 +58,14 @@ func (r *reconciler) reconcile(ctx context.Context) {
 	// error-severity diagnostic, reports degraded with the reason. This is the
 	// event-driven telemetry axis: one Gatus-style push per reconcile, no
 	// background clock. See notifier.report.
-	start := time.Now()
+	clock := r.clock
+	if clock == nil {
+		clock = time.Now
+	}
+	start := clock()
 	ok := true
 	healthMsg := ""
-	defer func() { report(r.notifier, ok, healthMsg, time.Since(start)) }()
+	defer func() { report(r.notifier, ok, healthMsg, clock().Sub(start)) }()
 
 	services, diags, err := discovery.Discover(ctx, r.rt, r.cfg, r.selfID)
 	if errDiags := r.routeDiagnostics(diags); errDiags > 0 {

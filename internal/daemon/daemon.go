@@ -22,6 +22,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/tagwright/beacon"
 
 	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/backend/otelcol"
@@ -33,10 +36,39 @@ import (
 // a socket path and the selected runtime is Docker.
 const defaultDockerSocket = "/var/run/docker.sock"
 
-// Run loads configPath, wires up every collaborator, runs an initial reconcile,
-// and then drives the debounced watch loop until ctx is cancelled. Signal
-// handling belongs to the caller: Run itself only ever reacts to ctx. It always
-// closes the runtime before returning.
+// Deps carries run's collaborators. It is the testable seam (the Testing
+// Standard's Level 2 wiring point): Run builds Deps from the config file and the
+// environment, then hands off to run; a wiring test builds Deps directly with
+// fakes (a core/runtime/runtimetest Runtime, a clock) and calls run to drive the
+// real discover/watch/reconcile path with an injected runtime fault, asserting
+// it surfaces rather than passing silently.
+//
+// Every field is a collaborator the production path constructs and a test
+// substitutes: the runtime, the backend the loop drives (the collector nudged
+// over the socket), the notifier, and a wall-clock reader for the per-pass
+// telemetry duration. Config, SelfID, and Debounce are the resolved
+// configuration run threads into the reconciler; a test sets them directly.
+//
+// run does NOT own the runtime's lifecycle: the caller that built the runtime
+// (Run) closes it. That keeps a wiring test's fake runtime under the test's
+// control.
+type Deps struct {
+	Runtime  runtime.Runtime
+	Backend  backend.Backend
+	Notifier *beacon.Beacon
+	Clock    func() time.Time // per-pass telemetry clock; nil defaults to time.Now
+
+	Config   *config.Config
+	Logger   *slog.Logger
+	SelfID   string
+	Debounce time.Duration
+}
+
+// Run loads configPath, wires up every collaborator, and hands off to run,
+// which runs an initial reconcile and then drives the debounced watch loop until
+// ctx is cancelled. Signal handling belongs to the caller: Run and run only ever
+// react to ctx. Run always closes the runtime before returning; run is the seam
+// a wiring test drives with fakes.
 func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
@@ -73,20 +105,48 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 		return fmt.Errorf("daemon: build notifier: %w", err)
 	}
 
+	return run(ctx, Deps{
+		Runtime:  rt,
+		Backend:  be,
+		Notifier: notifier,
+		Clock:    time.Now,
+		Config:   cfg,
+		Logger:   logger,
+		SelfID:   selfID,
+		Debounce: debounce,
+	})
+}
+
+// run is the daemon's production loop, driven through the injectable Deps seam.
+// It logs the startup line, builds the reconciler on d's collaborators, and runs
+// it (an initial reconcile then the debounced watch loop) until ctx is
+// cancelled. It does not own d.Runtime's lifecycle: the caller that built the
+// runtime closes it.
+func run(ctx context.Context, d Deps) error {
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	clock := d.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+
 	logger.Info("daemon: starting",
-		"backend", be.Name(),
-		"self_id", selfID,
-		"shared_config_path", cfg.SharedConfigPath,
-		"debounce", debounce.String())
+		"backend", d.Backend.Name(),
+		"self_id", d.SelfID,
+		"shared_config_path", d.Config.SharedConfigPath,
+		"debounce", d.Debounce.String())
 
 	r := &reconciler{
-		rt:       rt,
-		cfg:      cfg,
-		backend:  be,
-		notifier: notifier,
+		rt:       d.Runtime,
+		cfg:      d.Config,
+		backend:  d.Backend,
+		notifier: d.Notifier,
 		logger:   logger,
-		selfID:   selfID,
-		debounce: debounce,
+		selfID:   d.SelfID,
+		debounce: d.Debounce,
+		clock:    clock,
 	}
 	r.run(ctx)
 

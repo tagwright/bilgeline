@@ -31,6 +31,7 @@ func newTestReconciler(rt runtime.Runtime, be *fakeBackend, debounce time.Durati
 		logger:   testLogger(),
 		selfID:   "",
 		debounce: debounce,
+		clock:    time.Now,
 	}
 }
 
