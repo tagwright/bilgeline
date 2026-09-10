@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/tagwright/core v0.5.0
+	github.com/tagwright/core v0.6.0
 	github.com/tagwright/courier v0.2.0
 	gopkg.in/yaml.v3 v3.0.1
 )
