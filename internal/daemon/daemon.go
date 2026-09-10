@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/backend/otelcol"
@@ -55,7 +55,7 @@ const defaultDockerSocket = "/var/run/docker.sock"
 type Deps struct {
 	Runtime  runtime.Runtime
 	Backend  backend.Backend
-	Notifier *beacon.Beacon
+	Notifier *courier.Beacon
 	Clock    func() time.Time // per-pass telemetry clock; nil defaults to time.Now
 
 	Config   *config.Config

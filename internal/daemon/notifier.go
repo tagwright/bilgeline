@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/bilgeline/internal/config"
 	"github.com/tagwright/bilgeline/internal/discovery"
@@ -32,26 +32,26 @@ import (
 // If cfg configures no notification channel, the result is exactly the v1
 // behavior (the log floor only), so this is backward compatible: an existing
 // config with no notifications section behaves as before.
-func buildNotifier(cfg *config.Config) (*beacon.Beacon, error) {
+func buildNotifier(cfg *config.Config) (*courier.Beacon, error) {
 	// The log floor is always on, ahead of any configured channel, so a
 	// diagnostic is reported to the logs whether or not a real channel is set.
-	channels := make([]beacon.ChannelConfig, 0, len(cfg.Notifications)+1)
-	channels = append(channels, beacon.ChannelConfig{Type: "log"})
+	channels := make([]courier.ChannelConfig, 0, len(cfg.Notifications)+1)
+	channels = append(channels, courier.ChannelConfig{Type: "log"})
 	for i, c := range cfg.Notifications {
 		level, err := parseLevel(c.MinLevel)
 		if err != nil {
 			return nil, fmt.Errorf("notification channel %d (%s): %w", i, c.Type, err)
 		}
-		channels = append(channels, beacon.ChannelConfig{
+		channels = append(channels, courier.ChannelConfig{
 			Type:     c.Type,
 			MinLevel: level,
 			Settings: c.Settings,
 		})
 	}
 
-	telemetry := make([]beacon.TelemetryConfig, 0, len(cfg.Telemetry))
+	telemetry := make([]courier.TelemetryConfig, 0, len(cfg.Telemetry))
 	for _, t := range cfg.Telemetry {
-		telemetry = append(telemetry, beacon.TelemetryConfig{
+		telemetry = append(telemetry, courier.TelemetryConfig{
 			Type:     t.Type,
 			Settings: t.Settings,
 		})
@@ -62,21 +62,21 @@ func buildNotifier(cfg *config.Config) (*beacon.Beacon, error) {
 	// send time (credential rotation takes effect without a restart).
 	resolver := secret.FileEnvResolver(cfg.SecretsDir)
 
-	beaconCfg := beacon.Config{Channels: channels, Telemetry: telemetry}
-	return beacon.New(beaconCfg, beacon.SecretResolver(resolver))
+	beaconCfg := courier.Config{Channels: channels, Telemetry: telemetry}
+	return courier.New(beaconCfg, courier.SecretResolver(resolver))
 }
 
-// parseLevel maps a config.ChannelConfig.MinLevel string onto a beacon.Level.
+// parseLevel maps a config.ChannelConfig.MinLevel string onto a courier.Level.
 // An empty value means "receive everything" (LevelInfo). Config.Validate
 // already rejects unknown levels, so the default arm is a belt-and-braces guard.
-func parseLevel(s string) (beacon.Level, error) {
+func parseLevel(s string) (courier.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "info":
-		return beacon.LevelInfo, nil
+		return courier.LevelInfo, nil
 	case "warn", "warning":
-		return beacon.LevelWarning, nil
+		return courier.LevelWarning, nil
 	case "error":
-		return beacon.LevelError, nil
+		return courier.LevelError, nil
 	default:
 		return 0, fmt.Errorf("unknown notification level %q", s)
 	}
@@ -85,11 +85,11 @@ func parseLevel(s string) (beacon.Level, error) {
 // notify sends one alert through notifier, tolerating a nil notifier (a no-op)
 // and swallowing the send error: alerting is best-effort and the structured log
 // is the durable record. Mirrors ballast's daemon.notify.
-func notify(notifier *beacon.Beacon, level beacon.Level, title, body string) {
+func notify(notifier *courier.Beacon, level courier.Level, title, body string) {
 	if notifier == nil {
 		return
 	}
-	_ = notifier.Notify(context.Background(), beacon.Notification{
+	_ = notifier.Notify(context.Background(), courier.Notification{
 		Title: title,
 		Body:  body,
 		Level: level,
@@ -102,11 +102,11 @@ func notify(notifier *beacon.Beacon, level beacon.Level, title, body string) {
 // With no telemetry sink configured this is a no-op (beacon fans out to zero
 // sinks). The push is event-driven, fired once per reconcile pass, mirroring
 // how ballast reports per backup run rather than on a background clock.
-func report(notifier *beacon.Beacon, ok bool, message string, dur time.Duration) {
+func report(notifier *courier.Beacon, ok bool, message string, dur time.Duration) {
 	if notifier == nil {
 		return
 	}
-	_ = notifier.Report(context.Background(), beacon.Health{
+	_ = notifier.Report(context.Background(), courier.Health{
 		Name:     "bilgeline",
 		OK:       ok,
 		Message:  message,

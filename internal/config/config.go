@@ -235,7 +235,7 @@ var ReservedParserNames = []string{"json", "logfmt", "none", "auto", "debug"}
 // ChannelTypes is the set of valid notification channel Type values, matching
 // the backends beacon registers (its v1 backend set plus the always-on "log"
 // floor). Validate rejects any other type up front so a typo surfaces at config
-// load rather than as an opaque "unknown backend type" from beacon.New later.
+// load rather than as an opaque "unknown backend type" from courier.New later.
 var ChannelTypes = []string{
 	"log", "smtp", "ntfy", "gotify", "telegram",
 	"discord", "slack", "mattermost", "pushover", "webhook", "matrix",
@@ -378,7 +378,7 @@ func (c *Config) Validate() error {
 
 	// Notification channels: each must name a beacon-supported backend type and,
 	// if set, a known min_level. The Settings themselves are validated by the
-	// backend at build time (a missing required key surfaces from beacon.New);
+	// backend at build time (a missing required key surfaces from courier.New);
 	// config validates only what it owns, the type and level enums.
 	for i, ch := range c.Notifications {
 		if ch.Type == "" {

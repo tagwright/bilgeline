@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/bilgeline/internal/config"
 )
@@ -32,15 +32,15 @@ func TestBuildNotifierLogFloorOnly(t *testing.T) {
 		t.Fatal("buildNotifier returned nil notifier")
 	}
 	// The log floor accepts and swallows a notify with no error.
-	if err := n.Notify(context.Background(), beacon.Notification{
-		Title: "t", Body: "b", Level: beacon.LevelError,
+	if err := n.Notify(context.Background(), courier.Notification{
+		Title: "t", Body: "b", Level: courier.LevelError,
 	}); err != nil {
 		t.Errorf("Notify through log floor: %v", err)
 	}
 }
 
 // TestBuildNotifierUnknownType proves the configured channels are actually
-// handed to beacon: an unknown backend type reaches beacon.New and fails the
+// handed to beacon: an unknown backend type reaches courier.New and fails the
 // build (config.Validate is the first line of defence, but buildNotifier must
 // not silently drop channels).
 func TestBuildNotifierUnknownType(t *testing.T) {
@@ -108,8 +108,8 @@ func TestBuildNotifierDeliversToNtfy(t *testing.T) {
 		t.Fatalf("buildNotifier: %v", err)
 	}
 
-	if err := n.Notify(context.Background(), beacon.Notification{
-		Title: "bilgeline: error (svc)", Body: "unknown destination", Level: beacon.LevelError,
+	if err := n.Notify(context.Background(), courier.Notification{
+		Title: "bilgeline: error (svc)", Body: "unknown destination", Level: courier.LevelError,
 	}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestBuildNotifierMinLevelFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildNotifier: %v", err)
 	}
-	if err := n.Notify(context.Background(), beacon.Notification{Title: "i", Level: beacon.LevelInfo}); err != nil {
+	if err := n.Notify(context.Background(), courier.Notification{Title: "i", Level: courier.LevelInfo}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	if got {
@@ -238,8 +238,8 @@ func TestBuildNotifierLiveNtfy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildNotifier: %v", err)
 	}
-	if err := n.Notify(context.Background(), beacon.Notification{
-		Title: "bilgeline: error (itest)", Body: body, Level: beacon.LevelError,
+	if err := n.Notify(context.Background(), courier.Notification{
+		Title: "bilgeline: error (itest)", Body: body, Level: courier.LevelError,
 	}); err != nil {
 		t.Fatalf("Notify to live ntfy: %v", err)
 	}

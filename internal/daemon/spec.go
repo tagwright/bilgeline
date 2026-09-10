@@ -8,7 +8,7 @@ import (
 	"github.com/tagwright/bilgeline/internal/config"
 	"github.com/tagwright/bilgeline/internal/discovery"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 )
 
 // AssembleSpec is the config-to-backend bridge: it turns the services discovery
@@ -110,11 +110,11 @@ func flattenDestination(name string, d config.Destination) backend.Destination {
 // diagnostic (a container skipped for a validation fault) alerts at LevelError, a
 // warning at LevelWarning. It is the single place the two severity vocabularies
 // meet, kept pure so the mapping is unit-testable.
-func diagLevel(sev discovery.Severity) beacon.Level {
+func diagLevel(sev discovery.Severity) courier.Level {
 	switch sev {
 	case discovery.SeverityError:
-		return beacon.LevelError
+		return courier.LevelError
 	default:
-		return beacon.LevelWarning
+		return courier.LevelWarning
 	}
 }

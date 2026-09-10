@@ -32,7 +32,7 @@ import (
 const DefaultSecretsDir = "/run/bilgeline/secrets"
 
 // Resolver resolves a named secret to its value. Its signature intentionally
-// matches beacon.SecretResolver so BeaconResolver can hand it straight to the
+// matches courier.SecretResolver so BeaconResolver can hand it straight to the
 // notifier: channels and sinks name secrets, they never contain them.
 type Resolver func(name string) (string, error)
 

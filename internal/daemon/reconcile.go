@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/config"
@@ -27,7 +27,7 @@ type reconciler struct {
 	rt       runtime.Runtime
 	cfg      *config.Config
 	backend  backend.Backend
-	notifier *beacon.Beacon
+	notifier *courier.Beacon
 	logger   *slog.Logger
 	selfID   string
 	debounce time.Duration
@@ -77,7 +77,7 @@ func (r *reconciler) reconcile(ctx context.Context) {
 	}
 	if err != nil {
 		r.logger.Error("discovery failed", "error", err)
-		notify(r.notifier, beacon.LevelError, "bilgeline: discovery failed", err.Error())
+		notify(r.notifier, courier.LevelError, "bilgeline: discovery failed", err.Error())
 		ok, healthMsg = false, "discovery failed: "+err.Error()
 		return
 	}
@@ -93,7 +93,7 @@ func (r *reconciler) reconcile(ctx context.Context) {
 	rendered, err := r.backend.Render(spec)
 	if err != nil {
 		r.logger.Error("render failed", "backend", r.backend.Name(), "error", err)
-		notify(r.notifier, beacon.LevelError, "bilgeline: render failed", err.Error())
+		notify(r.notifier, courier.LevelError, "bilgeline: render failed", err.Error())
 		ok, healthMsg = false, "render failed: "+err.Error()
 		return
 	}
@@ -111,7 +111,7 @@ func (r *reconciler) reconcile(ctx context.Context) {
 		if result.Detail != "" {
 			body = result.Detail + ": " + err.Error()
 		}
-		notify(r.notifier, beacon.LevelError, "bilgeline: apply failed", body)
+		notify(r.notifier, courier.LevelError, "bilgeline: apply failed", body)
 		ok, healthMsg = false, "apply failed: "+body
 		return
 	}

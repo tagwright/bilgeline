@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/bilgeline/internal/backend"
 	"github.com/tagwright/bilgeline/internal/config"
@@ -121,14 +121,14 @@ func TestAssembleSpecRoutedNowhere(t *testing.T) {
 }
 
 func TestDiagLevel(t *testing.T) {
-	if got := diagLevel(discovery.SeverityError); got != beacon.LevelError {
+	if got := diagLevel(discovery.SeverityError); got != courier.LevelError {
 		t.Errorf("SeverityError -> %v, want LevelError", got)
 	}
-	if got := diagLevel(discovery.SeverityWarning); got != beacon.LevelWarning {
+	if got := diagLevel(discovery.SeverityWarning); got != courier.LevelWarning {
 		t.Errorf("SeverityWarning -> %v, want LevelWarning", got)
 	}
 	// An unknown severity maps to the safe, non-error floor.
-	if got := diagLevel(discovery.Severity("bogus")); got != beacon.LevelWarning {
+	if got := diagLevel(discovery.Severity("bogus")); got != courier.LevelWarning {
 		t.Errorf("unknown severity -> %v, want LevelWarning", got)
 	}
 }
