@@ -23,7 +23,8 @@ mounts that same config volume read-only, plus `/var/lib/docker/containers` wher
 the Docker json logs live. bilgeline discovers and generates, the collector tails
 and ships, and secrets live only on the collector side. The full compose stack,
 the mounts, first-boot ordering, and the SOPS secret recipe are in
-[docs/DEPLOY.md](docs/DEPLOY.md).
+[docs/DEPLOY.md](docs/DEPLOY.md). The secret handling, and what bilgeline does and
+does not do to protect log content, are in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Quickstart
 
