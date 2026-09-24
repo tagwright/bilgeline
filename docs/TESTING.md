@@ -156,7 +156,7 @@ All ten cases pass against Docker 29.1.3 with the pinned collector 0.159.0.
   *succeeds* (the steady-state path, `00_core_route`), and a reload that *wedges
   and does not recover* (a `${env:VAR}` missing from a structural config
   position makes the collector fail to load; bilgeline restarts once, it dies
-  again, and Apply reports it) — this is how the reconcile-detail bug below was
+  again, and Apply reports it). This is how the reconcile-detail bug below was
   found. The middle outcome, a wedge that *recovers* on the one restart, is not
   forced live: inducing a reload that fails once and then succeeds needs a
   collector that crashes on exactly one SIGHUP, which we have no clean lever for.
@@ -239,7 +239,7 @@ the harness and the fixed `docker-compose.yml`:
 
 4. **A wedged collector reached the operator with the cause discarded.** On an
    Apply error (e.g. a collector wedged by a missing `${env:VAR}`), the reconcile
-   logged only the terse error and threw away `ApplyResult.Detail` — the one
+   logged only the terse error and threw away `ApplyResult.Detail`, the one
    field carrying the env-preflight warning that named the missing var and the
    wedge narrative. Fixed in `internal/daemon/reconcile.go` to log the detail on
    the error path too, with a regression test.

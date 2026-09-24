@@ -1,14 +1,16 @@
 # bilgeline
 
 Label-driven log routing for Docker and Podman. bilgeline reads `bilgeline.*`
-labels off your running containers and generates an OpenTelemetry Collector
-configuration that routes each service's logs to the destination you named. You
+labels off your running containers and generates an [OpenTelemetry
+Collector](https://opentelemetry.io/docs/collector/) configuration that routes
+each service's logs to the destination you named. You
 describe where logs should go in the compose file, next to the service they
 belong to, and bilgeline keeps the collector config in sync as containers come
 and go.
 
 bilgeline is a pure generator. It does not bundle, ship, or run a collector. You
-deploy your own `otelcol-contrib` container, and bilgeline drives it: it writes
+deploy your own [`otelcol-contrib`](https://github.com/open-telemetry/opentelemetry-collector-contrib)
+container, and bilgeline drives it: it writes
 the generated config to a shared volume and signals the collector to reload.
 Because the collector does the tailing and shipping, bilgeline holds no exporter
 credentials and never reads a log byte.
@@ -96,13 +98,10 @@ honest coverage map is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Design
 
-The architecture and the frozen label grammar are documented in the wiki:
-
-- tagwright/Bilgeline Architecture
-- tagwright/Bilgeline Label Grammar (Draft)
-
-The in-repo [docs/LABELS.md](docs/LABELS.md) is the authoritative label reference
-and tracks the code where the wiki draft drifts.
+The two-container model above covers the architecture. The label grammar itself,
+every label with its type and its defaults, lives in
+[docs/LABELS.md](docs/LABELS.md), the authoritative reference, which tracks the
+code.
 
 ## License
 
