@@ -173,17 +173,6 @@ func WithCollectorHealthURL(url string) Option {
 	}
 }
 
-// WithReloadWait overrides the bounded window Apply polls the collector's
-// container state after a SIGHUP (and after a restart). A non-positive value is
-// ignored, leaving DefaultReloadWait in place.
-func WithReloadWait(d time.Duration) Option {
-	return func(b *Backend) {
-		if d > 0 {
-			b.reloadWait = d
-		}
-	}
-}
-
 // New constructs an otelcol Backend with the given options applied over the
 // deployment defaults.
 func New(opts ...Option) *Backend {

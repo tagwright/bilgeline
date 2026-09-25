@@ -149,13 +149,17 @@ func collectorContainer(id, name, sharedDir string) runtime.Container {
 }
 
 // newBackend wires a Backend for the apply path with a short reload window.
+// The short window is set on the struct field directly (this is a white-box
+// package test): reloadWait is a test-only knob with no production caller, so it
+// carries no exported option constructor, which keeps the deadcode gate honest.
 func newBackend(rt runtime.Runtime, sharedPath string, opts ...Option) *Backend {
 	base := []Option{
 		WithRuntime(rt),
 		WithSharedConfigPath(sharedPath),
-		WithReloadWait(30 * time.Millisecond),
 	}
-	return New(append(base, opts...)...)
+	b := New(append(base, opts...)...)
+	b.reloadWait = 30 * time.Millisecond
+	return b
 }
 
 func sharedPathIn(t *testing.T) (dir, path string) {

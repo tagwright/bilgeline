@@ -1,0 +1,26 @@
+# Wiring-package statement-coverage floors for bilgeline (Testing Standard
+# enforceability layer, task #552). Format: "<package> <floor-percent>", one
+# per line, blank lines and #-comments ignored.
+#
+# Scoped to the WIRING packages only -- the socket-event-to-effect layer where
+# this suite's confirmed bugs live -- never a global percentage. bilgeline's
+# wiring is internal/daemon (the watch/debounce/reconcile/apply control loop and
+# its notifier/telemetry wiring) and internal/discovery (the socket-event to
+# resolved-spec layer: list/inspect the socket, parse labels, resolve fields).
+# internal/config and internal/secret are pure core (parse/validate/derive, no
+# socket, no clock) and are NOT wiring, so they are not floored here.
+# internal/backend/otelcol is predominantly the pure otelcol render translation
+# (Level 1) and is not floored as wiring here either; mirroring ballast, whose
+# floor lists only its daemon-loop wiring packages.
+#
+# This is a ratchet: a floor may only RISE. Raise a number when coverage climbs
+# so a later regression trips the gate; never lower one to make a regression
+# pass (that is the "never weaken a gate" rule the standard forbids).
+#
+# Baselines measured 2026-09-25 on golang:1.25 (deterministic under -count=1),
+# floored to a whole percent at/below the measured value to absorb toolchain
+# rounding:
+#   internal/daemon     measured 56.4%
+#   internal/discovery  measured 88.5%
+internal/daemon 56
+internal/discovery 88
