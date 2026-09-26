@@ -7,7 +7,7 @@
 # build fetch tagwright's own modules directly from their source rather than
 # through the public module proxy. go.sum still verifies their integrity.
 
-FROM golang:1.25 AS build
+FROM golang:1.25.14 AS build
 
 ENV GOPRIVATE=github.com/tagwright/*
 
